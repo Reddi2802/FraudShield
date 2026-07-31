@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+langgraph
+scikit-learn
+xgboost
+imbalanced-learn
+pandas
+numpy
+sqlalchemy
+streamlit
+plotly
+pytest
