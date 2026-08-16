@@ -1,0 +1,29 @@
+[project]
+name = "26-27-fall-se-lab-projects-reddi2802"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.11"
+dependencies = [
+    "apscheduler>=3.11.3",
+    "fastapi>=0.141.1",
+    "imbalanced-learn>=0.14.2",
+    "langgraph>=1.2.11",
+    "networkx>=3.6.1",
+    "numpy>=2.4.6",
+    "ollama>=0.6.2",
+    "pandas>=3.0.5",
+    "passlib[bcrypt]>=1.7.4",
+    "plotly>=6.9.0",
+    "python-jose[cryptography]>=3.5.0",
+    "scikit-learn>=1.9.0",
+    "sqlalchemy>=2.0.52",
+    "streamlit>=1.61.1",
+    "uvicorn[standard]>=0.52.3",
+    "xgboost>=3.2.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.3",
+]
