@@ -37,8 +37,25 @@ This log records why this system is built the way it is. The original SE lab sub
 **Context:** The instructor checks commit history periodically. Early commits were large and infrequent.
 **Decision:** One commit per completed agent or feature, mapped to the sprint structure already defined in Lab 3, rather than one commit per working session.
 
+### ADR-008 — Core scope is all 8 agents; "Core vs. Extension" tiering retired
+**Context:** An earlier internal roadmap (pre-Lab7) split the 8 agents into a "Core" tier (6 agents) and an "Extension" tier (Device Trust, Network Intelligence, treated as optional/later). Lab7's component diagram was then submitted with Device Trust and Network Intelligence fully wired into the orchestrator's coordination and interface contracts (`INetworkRiskScore`).
+**Decision:** All 8 agents are core scope. The Core/Extension split is retired as of this ADR. What remains genuinely optional is scoped separately below (ADR-009), not folded into the 8-agent set.
+**Why:** A graded, submitted diagram is a commitment. Calling a diagrammed, interface-defined agent "optional" internally creates a document that contradicts the artifact it's supposed to explain — a bad look if a reviewer or interviewer cross-references the repo against the lab submissions.
+
+### ADR-009 — Monitoring Agent cut; Investigator Assistant Agent conditional on a week-5 checkpoint
+**Context:** Lab5 explicitly scoped Admin console features (rule config, investigator management, agent-log viewing, drift monitoring) and semantic case search as actor-level capabilities, not standalone system modules to be diagrammed. The README's agent table nonetheless listed a "Monitoring Agent (planned)" and "Investigator Assistant Agent (stretch)" alongside the real 8, which is not what the diagrams committed to.
+**Decision:**
+- **Monitoring Agent: dropped.** Not built, not diagrammed, not listed as a project agent. Drift monitoring, if mentioned at all, is a "future work" line, not a table entry implying active development.
+- **Investigator Assistant Agent (FAISS semantic case search): conditional.** All 8 core agents are built and demonstrable end-to-end first, no exceptions. At the **week-5 checkpoint**, evaluate actual progress against the plan below. Only if the 8-agent pipeline is on track does Investigator Assistant get scheduled into the remaining weeks. This is a scheduled decision point, not an open-ended "if time allows."
+**Why:** "If time allows" is how scope drifted before (new agent nearly every lab). A dated checkpoint with a concrete precondition (8 agents done) replaces that pattern with an actual decision rule.
+
+### ADR-010 — RBAC scoped to where it gates real pipeline behavior
+**Context:** Admin does not correspond to any of the 8 diagrammed agents — Lab5 treats Admin capabilities (configure rules, manage investigators, view logs) as dashboard-level actor conveniences, not system modules. Customer and Investigator roles, by contrast, gate real pipeline actions: submitting a transaction, reviewing/resolving a fraud case.
+**Decision:** Real JWT-based auth (`python-jose` + `passlib`) is implemented for **Customer** and **Investigator** roles, since these gate actual agent-pipeline behavior. **Admin** is implemented as a simplified role flag — sufficient to demo an admin view — without full login/token-verification plumbing behind it.
+**Rejected alternative:** Full JWT RBAC across all three roles. Rejected because Admin's capabilities are not exercised by any agent in the pipeline; building real auth infrastructure for a role with no corresponding system logic spends time budget on infrastructure that doesn't demonstrate the project's actual subject matter (multi-agent fraud reasoning), inside a fixed ~8-week build window.
+
 ---
 
 ## Open items (revisit as the project progresses)
-- Retraining trigger threshold (how many new `Feedback` labels before the Behavioral Analysis Agent retrains) — not yet finalized.
-- Whether Admin RBAC ships as real JWT auth or a simplified role flag, depending on time remaining in weeks 7–10.
+- Retraining trigger threshold (how many new `Feedback` labels before the Behavioral Analysis Agent retrains) — not yet finalized; to be set when the Behavioral Analysis / Case Management feedback loop is built.
+- Week-5 checkpoint (ADR-009): go/no-go on Investigator Assistant Agent, decided against actual progress at that point, not in advance.

@@ -1,6 +1,6 @@
 # Multi-Agent AI System for Real-Time Financial Fraud Detection
 
-A real-time transaction fraud detection platform where specialized AI agents — rule-based, statistical, ML, and LLM-driven — collaborate through a shared-state graph to analyze, score, explain, and route financial transactions. Built for the VIT Chennai Software Engineering Lab (24BDS1028), and doubling as a portfolio project.
+A real-time transaction fraud detection platform where specialized AI agents — rule-based, statistical, ML, and LLM-driven — collaborate through a shared-state graph to analyze, score, explain, and route financial transactions.
 
 ## Why this project is different
 
@@ -63,13 +63,13 @@ POST /transaction
 | Risk Synthesis | Aggregator | Fuses all signals → unified decision |
 | Explanation | Rule-based + local LLM | Instant templated reason + async natural-language reason |
 | Case Management | Deterministic | Creates/assigns/tracks investigation cases |
-| Monitoring *(planned)* | Statistical | Watches prediction drift, flags retraining need |
-| Investigator Assistant *(stretch)* | Semantic search | Finds similar past cases via embeddings |
+
+All 8 agents above are core scope (see `docs/DECISIONS.md`, ADR-008). A ninth agent, **Investigator Assistant** (semantic case search via embeddings), is conditional: it is only scheduled after the 8 core agents are complete and demoable, decided at a week-5 checkpoint (ADR-009). A Monitoring Agent was considered and dropped — not part of this project's scope.
 
 ## Tech stack
 
 - **Orchestration:** LangGraph
-- **API:** FastAPI + Uvicorn, JWT auth via `python-jose` + `passlib` (customer/investigator/admin roles)
+- **API:** FastAPI + Uvicorn, JWT auth via `python-jose` + `passlib` (real auth for Customer/Investigator roles; Admin is a simplified role flag — see ADR-010)
 - **ML:** scikit-learn (Isolation Forest), XGBoost, imbalanced-learn (SMOTE)
 - **Graph analytics:** networkx
 - **LLM:** Ollama, `llama3.1:8b-instruct` (local, quantized — no API cost, no data leaves the device)
@@ -83,21 +83,27 @@ POST /transaction
 ## Project structure
 
 ```
-agents/           # all 8 agents + orchestrator.py (LangGraph wiring)
-api/               # FastAPI app, routes, auth
-db/                # SQLAlchemy models + session
-ml/                # training scripts, evaluation, gitignored model artifacts
-dashboard/         # Streamlit app
-scripts/           # seed_db.py, run_network_batch.py, etc.
+agents/           # 8 agent files + orchestrator.py (LangGraph wiring)
+api/               # FastAPI app, entry point, request/response models, JWT auth
+  routes/          # route handlers (transaction submission, case endpoints, etc.)
+db/                # SQLAlchemy models + session/engine, schema follows the Lab5 ERD
+ml/                # training scripts (Isolation Forest, XGBoost), evaluation
+  artifacts/       # gitignored — trained model files, not committed
+dashboard/         # Streamlit app — not yet built
+scripts/           # seed_db.py, run_network_batch.py, etc. — not yet built
 tests/             # pytest, mirrors agents/ and api/
+  test_agents/
+  test_api/
+data/              # gitignored except .gitkeep — raw/processed IEEE-CIS data lives here locally
 docs/
-  labs/            # the 5 SE lab submissions this project is graded against
-  DECISIONS.md     # architecture decision log
-data/              # gitignored — raw/processed IEEE-CIS data lives here locally
-.github/workflows/ # CI
+  DECISIONS.md     # architecture decision log — canonical design-reasoning record;
+                    # the actual SE lab submissions are filed separately via MS Teams,
+                    # not duplicated in this repo
 pyproject.toml
 uv.lock
 ```
+
+Note: `.github/workflows/` (CI) does not exist yet — it's a week-8 addition (see Roadmap), added once there's a test suite worth running on push, not scaffolded early.
 
 ## Setup
 
@@ -132,9 +138,17 @@ uv run pytest
 
 ## Roadmap
 
-- **Weeks 1–6 (Core):** Ingestion, Rule Compliance, Behavioral Analysis, Risk Synthesis, Explanation, Case Management — end-to-end pipeline, evaluated on precision/recall/F1/FPR.
-- **Weeks 7–10 (Extension):** Device Trust, Network Intelligence, RBAC/Admin console, investigator feedback → retraining loop, Monitoring Agent.
-- **Weeks 11–12 (Stretch):** Investigator Assistant (semantic case search), CI, decision log polish.
+All 8 agents are core scope (ADR-008). Build order is sequenced by dependency and complexity, not by an artificial core/extension split:
+
+- **Week 1:** Ingestion Agent + API Gateway + DB models — foundation everything else builds on.
+- **Week 2:** Rule Compliance Agent + Device Trust Agent (both deterministic/statistical, no ML training loop).
+- **Week 3:** Behavioral Analysis Agent (Isolation Forest) — deepest ML component.
+- **Week 4:** Risk Synthesis Agent + orchestrator wiring — first end-to-end demo (Ingestion → Rules → Behavioral → Device → decision).
+- **Week 5 — checkpoint:** Network Intelligence Agent (graph metrics, async APScheduler job). Go/no-go decision on Investigator Assistant Agent made here against actual progress (ADR-009).
+- **Week 6:** Explanation Agent (sync template + async local LLM) + Case Management Agent.
+- **Week 7:** Streamlit dashboard, Customer/Investigator JWT auth, Admin role flag, integration testing.
+- **Week 8:** Test coverage (pytest), a minimal GitHub Actions CI workflow (run pytest on push), retraining-threshold decision, DECISIONS.md finalization, demo rehearsal.
+- **Week 9 (buffer):** Absorbs holiday/lab disruption; Investigator Assistant work lands here if greenlit at the week-5 checkpoint.
 
 ## Academic context
 
