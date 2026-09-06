@@ -53,6 +53,24 @@ TRANSACTION_CSV = DATA_DIR / "train_transaction.csv"
 IDENTITY_CSV = DATA_DIR / "train_identity.csv"
 
 N_CUSTOMERS = 1500  # per project decision: medium volume
+MIN_TRANSACTIONS_PER_UID = 8  # exclude thin-history UIDs from the demo DB —
+# a per-customer Isolation Forest (week 3) needs prior transactions to
+# establish "normal" for that customer, and the raw card1+addr1+D1 UID
+# fragments heavily across the full dataset (246K distinct UIDs / ~590K
+# rows, ~2.4 txns/UID on average). Uniform-random sampling over all UIDs
+# mostly picks thin ones. This filter is a SEEDING/DEMO-DATA POLICY only —
+# it does not change the UID definition (ADR-011) or how Behavioral
+# Analysis trains from the raw CSV in week 3.
+MAX_TRANSACTIONS_PER_UID = 150  # exclude implausibly high-count UIDs.
+# IEEE-CIS spans ~6 months; a UID with hundreds/thousands of transactions
+# is not a real, unusually active customer — it's almost certainly a
+# CARD1+ADDR1+D1 COLLISION, where the masked value space merged several
+# genuinely different people into one UID. Without this cap, high-count
+# outliers are exactly the ones the >=8 floor is most likely to keep,
+# which would seed a "customer" that's actually a blend of several real
+# people. 150 is a generous but bounded ceiling (~1 txn/day sustained),
+# not a rigorously derived number — check the printed top-10 counts below
+# and adjust if the real distribution suggests otherwise.
 RANDOM_SEED = 42
 DEMO_PASSWORD = "ChangeMe123!"  # shared demo credential, not a real secret
 REFERENCE_START = datetime(2017, 12, 1)  # community-estimated TransactionDT epoch
@@ -109,19 +127,43 @@ def load_source_data() -> pd.DataFrame:
     return merged
 
 
-def sample_customers(df: pd.DataFrame, n: int, seed: int) -> pd.DataFrame:
-    distinct_uids = df["synthetic_uid"].unique().tolist()
-    print(f"Found {len(distinct_uids):,} distinct synthetic UIDs in the loaded data.")
+def sample_customers(
+    df: pd.DataFrame,
+    n: int,
+    seed: int,
+    min_transactions: int,
+    max_transactions: int,
+) -> pd.DataFrame:
+    uid_counts = df["synthetic_uid"].value_counts()
+    print(f"Found {len(uid_counts):,} distinct synthetic UIDs in the loaded data.")
+    print(f"  UID transaction-count distribution: min={uid_counts.min()}, "
+          f"median={uid_counts.median():.1f}, max={uid_counts.max()}, "
+          f"mean={uid_counts.mean():.2f}")
+    print(f"  Top 10 highest-count UIDs (extreme outliers here are almost "
+          f"certainly card1+addr1+D1 collisions, not real high-activity "
+          f"customers): {uid_counts.head(10).to_dict()}")
 
-    if len(distinct_uids) < n:
+    qualifying_uids = uid_counts[
+        (uid_counts >= min_transactions) & (uid_counts <= max_transactions)
+    ].index.tolist()
+    print(
+        f"{len(qualifying_uids):,} UIDs fall within [{min_transactions}, "
+        f"{max_transactions}] transactions (the pool sampling draws from — "
+        "excludes both thin-history UIDs and implausibly-high-count UIDs "
+        "that are likely collisions, not real customers)."
+    )
+
+    if len(qualifying_uids) < n:
         print(
-            f"WARNING: only {len(distinct_uids)} distinct UIDs available, "
-            f"fewer than the requested {n} — seeding all of them instead."
+            f"WARNING: only {len(qualifying_uids)} UIDs meet the "
+            f"[{min_transactions}, {max_transactions}] range, fewer than "
+            f"the requested {n} — seeding all of them instead. Consider "
+            "widening the range if you need more customers."
         )
-        chosen = distinct_uids
+        chosen = qualifying_uids
     else:
         rng = random.Random(seed)
-        chosen = rng.sample(distinct_uids, n)
+        chosen = rng.sample(qualifying_uids, n)
 
     chosen_set = set(chosen)
     subset = df[df["synthetic_uid"].isin(chosen_set)].copy()
@@ -234,7 +276,9 @@ def seed(df: pd.DataFrame) -> None:
 
 def main() -> None:
     df = load_source_data()
-    subset = sample_customers(df, N_CUSTOMERS, RANDOM_SEED)
+    subset = sample_customers(
+        df, N_CUSTOMERS, RANDOM_SEED, MIN_TRANSACTIONS_PER_UID, MAX_TRANSACTIONS_PER_UID
+    )
     print(f"Seeding from {len(subset):,} transaction rows across the sampled UIDs...")
     seed(subset)
 

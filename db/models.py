@@ -32,7 +32,7 @@ Identity note (ADR-011 / ADR-012):
 from __future__ import annotations
 
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import ForeignKey, JSON, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -74,7 +74,7 @@ class Customer(Base):
     name: Mapped[str] = mapped_column(String(120))
     email: Mapped[str] = mapped_column(String(255), unique=True)
     hashed_password: Mapped[str] = mapped_column(String(255))  # passlib bcrypt hash
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
     accounts: Mapped[list["Account"]] = relationship(back_populates="customer")
     devices: Mapped[list["Device"]] = relationship(back_populates="customer")
@@ -90,7 +90,7 @@ class Account(Base):
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.customer_id"))
     account_number: Mapped[str] = mapped_column(String(34), unique=True)
     account_type: Mapped[str] = mapped_column(String(50))  # e.g. "checking", "credit"
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
     customer: Mapped["Customer"] = relationship(back_populates="accounts")
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="account")
@@ -103,8 +103,8 @@ class Device(Base):
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.customer_id"))
     device_fingerprint: Mapped[str] = mapped_column(String(255), unique=True)
     device_type: Mapped[str] = mapped_column(String(50))  # e.g. "mobile", "desktop"
-    first_seen_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    last_seen_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    first_seen_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
+    last_seen_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
     customer: Mapped["Customer"] = relationship(back_populates="devices")
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="device")
@@ -134,7 +134,7 @@ class Transaction(Base):
     )
     amount: Mapped[float]
     currency: Mapped[str] = mapped_column(String(3), default="USD")
-    submitted_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    submitted_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
     account: Mapped["Account"] = relationship(back_populates="transactions")
     merchant: Mapped["Merchant"] = relationship(back_populates="transactions")
@@ -160,7 +160,7 @@ class ModelVersion(Base):
 
     model_version_id: Mapped[int] = mapped_column(primary_key=True)
     model_type: Mapped[str] = mapped_column(String(100))  # e.g. "isolation_forest_behavioral"
-    trained_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    trained_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
     hyperparameters: Mapped[dict] = mapped_column(JSON, default=dict)
     metrics: Mapped[dict] = mapped_column(JSON, default=dict)  # precision/recall/F1/FPR at training time
     artifact_path: Mapped[str] = mapped_column(String(500))  # points into ml/artifacts/ (gitignored)
@@ -182,7 +182,7 @@ class RiskAssessment(Base):
     risk_score: Mapped[float]  # 0.0–1.0, fused across agents
     decision: Mapped[DecisionEnum]
     explanation_text: Mapped[str] = mapped_column(String(2000))
-    assessed_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    assessed_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
     transaction: Mapped["Transaction"] = relationship(back_populates="risk_assessments")
     model_version: Mapped["ModelVersion | None"] = relationship(
@@ -209,7 +209,7 @@ class NetworkRiskScore(Base):
     customer_id: Mapped[int] = mapped_column(ForeignKey("customers.customer_id"))
     score: Mapped[float]
     graph_metrics: Mapped[dict] = mapped_column(JSON, default=dict)  # degree, clustering_coeff, etc.
-    computed_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    computed_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
     customer: Mapped["Customer"] = relationship(back_populates="network_risk_scores")
 
@@ -221,7 +221,7 @@ class AgentLog(Base):
     transaction_id: Mapped[int] = mapped_column(ForeignKey("transactions.transaction_id"))
     agent_name: Mapped[str] = mapped_column(String(100))  # e.g. "device_trust"
     raw_output: Mapped[dict] = mapped_column(JSON, default=dict)
-    logged_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    logged_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
     transaction: Mapped["Transaction"] = relationship(back_populates="agent_logs")
 
@@ -251,7 +251,7 @@ class FraudCase(Base):
         ForeignKey("investigators.investigator_id"), nullable=True
     )
     status: Mapped[CaseStatusEnum] = mapped_column(default=CaseStatusEnum.OPEN)
-    opened_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    opened_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
     resolved_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     transaction: Mapped["Transaction"] = relationship(back_populates="fraud_case")
@@ -267,7 +267,7 @@ class Feedback(Base):
     investigator_id: Mapped[int] = mapped_column(ForeignKey("investigators.investigator_id"))
     label: Mapped[FeedbackLabelEnum]
     notes: Mapped[str | None] = mapped_column(String(1000), nullable=True)
-    submitted_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    submitted_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(timezone.utc))
 
     fraud_case: Mapped["FraudCase"] = relationship(back_populates="feedback_entries")
     investigator: Mapped["Investigator"] = relationship(back_populates="feedback_entries")

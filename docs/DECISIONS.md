@@ -67,6 +67,7 @@ This log records why this system is built the way it is. The original SE lab sub
 ### ADR-011 — Synthetic UID for customer identity (IEEE-CIS has no native key)
 
 UID = card1+addr1+D1, chosen for consensus and simplicity; revisit at week 3 if per-UID transaction-count distribution shows pathological fragmentation or collision.
+Observed at seed time: high-count UID collisions are concentrated in rows with missing addr1 and D1=0 — e.g. one UID matched 7,198 rows under this pattern. Confirms the predicted collision risk; the [8,150] seeding range (see scripts/seed_db.py) was chosen specifically to exclude these.
 
 ### ADR-012 — Per-UID features must be time-gated, not full-history
 
@@ -89,6 +90,16 @@ for a system meant to score transactions in real time.
 **Consequence:** Feature computation needs a time-ordered expanding aggregation per UID, 
 not a single groupby. This matches how a real production system actually works — it never 
 has a customer's future transactions when scoring a live one.
+
+### ADR-013 — Seed data sampled from UIDs with 8–150 transactions, not the full population
+
+**Context:** Uniform sampling over all 246,418 UIDs mostly picks thin-history customers (median=1 transaction) — no baseline for Behavioral Analysis (week 3) to learn from. The same distribution's high end is worse: the top UID matched 7,198 rows, concentrated around missing `addr1` + `D1=0` — a card1+addr1+D1 collision merging many different transactions into one UID, not one very active customer.
+
+**Decision:** `scripts/seed_db.py` samples its 1,500 customers only from UIDs with 8–150 transactions. Floor excludes thin-history UIDs; ceiling excludes collision-driven outliers (150 ≈ 1 txn/day sustained over IEEE-CIS's ~6-month window, already generous for a real shopper).
+
+**Rejected alternative:** Uniform sampling (original implementation). Rejected because it's exposed to both problems at once — mostly thin customers, with no protection against collision outliers either.
+
+**Why this isn't a training-data change:** Both bounds are seeding/demo-data policy only. `ml/train_isolation_forest.py` (week 3) trains directly against the unfiltered raw CSV, per ADR-012.
 ---
 
 ## Open items (revisit as the project progresses)
