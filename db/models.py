@@ -19,6 +19,14 @@ are the things you'll be asked to defend:
   something computed per transaction.
 - AgentLog is ONE-TO-MANY from Transaction — independent audit trail of
   every agent's raw output, separate from RiskAssessment's final result.
+
+Identity note (ADR-011 / ADR-012):
+- Customer.synthetic_uid is the join key between IEEE-CIS-derived identity
+  (card1+addr1+D1, see agents/uid.py) and this ORM's Customer row. It is a
+  probabilistic proxy, not a verified identity key — see ADR-011 for
+  documented limitations. Customer.name / email / hashed_password are
+  FABRICATED at seed time (scripts/seed_db.py) for demo-login purposes
+  only; IEEE-CIS provides no real name, email, or credential for anyone.
 """
 
 from __future__ import annotations
@@ -59,6 +67,10 @@ class Customer(Base):
     __tablename__ = "customers"
 
     customer_id: Mapped[int] = mapped_column(primary_key=True)
+    # ADR-011 join key: card1+addr1+D1 -> string, computed by agents/uid.py.
+    # unique+indexed because both ingestion.py and seed_db.py look up
+    # "does a Customer with this UID already exist" on every transaction.
+    synthetic_uid: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(120))
     email: Mapped[str] = mapped_column(String(255), unique=True)
     hashed_password: Mapped[str] = mapped_column(String(255))  # passlib bcrypt hash

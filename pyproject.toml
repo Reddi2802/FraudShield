@@ -5,6 +5,7 @@ description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
     "apscheduler>=3.11.3",
+    "bcrypt<4.1",
     "fastapi>=0.141.1",
     "imbalanced-learn>=0.14.2",
     "langgraph>=1.2.11",
