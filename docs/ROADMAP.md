@@ -7,7 +7,7 @@ Companion to `DECISIONS.md` (the *why*) — this is the *what's left*. Check ite
 ## Week 1 — Ingestion Agent + API Gateway + DB models
 
 - [x] SQLAlchemy models — 13 entities from the Lab5 ERD (`db/base.py`, `db/models.py`, `db/session.py`)
-- [ ] **Push `db/` files to the repo** — built but not yet committed as of this checklist
+- [x] **Push `db/` files to the repo** — built but not yet committed as of this checklist
 - [ ] `api/main.py` — FastAPI app entry point; calls `init_db()` at startup
 - [ ] `api/routes/transactions.py` — `POST /transaction` endpoint accepting a raw transaction payload
 - [ ] `agents/ingestion.py` — validates incoming data, enriches with account/device history
