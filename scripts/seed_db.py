@@ -36,7 +36,7 @@ Run with:
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -73,7 +73,7 @@ MAX_TRANSACTIONS_PER_UID = 150  # exclude implausibly high-count UIDs.
 # and adjust if the real distribution suggests otherwise.
 RANDOM_SEED = 42
 DEMO_PASSWORD = "ChangeMe123!"  # shared demo credential, not a real secret
-REFERENCE_START = datetime(2017, 12, 1)  # community-estimated TransactionDT epoch
+REFERENCE_START = datetime(2017, 12, 1, tzinfo=timezone.utc)  # community-estimated TransactionDT epoch
 COMMIT_BATCH_SIZE = 500
 
 TRANSACTION_COLUMNS = [

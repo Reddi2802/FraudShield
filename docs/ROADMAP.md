@@ -8,13 +8,13 @@ Companion to `DECISIONS.md` (the *why*) — this is the *what's left*. Check ite
 
 - [x] SQLAlchemy models — 13 entities from the Lab5 ERD (`db/base.py`, `db/models.py`, `db/session.py`)
 - [x] **Push `db/` files to the repo** — built but not yet committed as of this checklist
-- [ ] `api/main.py` — FastAPI app entry point; calls `init_db()` at startup
-- [ ] `api/routes/transactions.py` — `POST /transaction` endpoint accepting a raw transaction payload
-- [ ] `agents/ingestion.py` — validates incoming data, enriches with account/device history
-- [ ] `scripts/seed_db.py` — seeds sample customers, accounts, devices, merchants so there's something to enrich against
-- [ ] `tests/test_agents/test_ingestion.py` — valid input, malformed input, transaction with no device
-- [ ] `tests/test_api/test_transactions.py` — endpoint returns correct status/shape
-- [ ] Commit: schema + ingestion + API gateway as one or two units of work
+- [x] `api/main.py` — FastAPI app entry point; calls `init_db()` at startup
+- [x] `api/routes/transactions.py` — `POST /transaction` endpoint accepting a raw transaction payload
+- [x] `agents/ingestion.py` — validates incoming data, enriches with account/device history
+- [x] `scripts/seed_db.py` — seeds sample customers, accounts, devices, merchants so there's something to enrich against
+- [x] `tests/test_agents/test_ingestion.py` — valid input, malformed input, transaction with no device
+- [x] `tests/test_api/test_transactions.py` — endpoint returns correct status/shape
+- [x] Commit: schema + ingestion + API gateway as one or two units of work
 - [ ] QnA checkpoint: validation/enrichment logic, why FastAPI, request/response model shape
 
 ## Week 2 — Rule Compliance + Device Trust
