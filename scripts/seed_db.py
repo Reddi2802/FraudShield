@@ -6,6 +6,10 @@ reasoning — this file just implements them):
 
 - Identity (ADR-011): Customer.synthetic_uid = agents.uid.compute_uid on
   (card1, addr1, D1). This is a probabilistic proxy, not a verified key.
+- Customer.billing_region (Week 2) persists the cleaned addr1 value —
+  profile context only, NOT a rule-trigger field (see rule_compliance.py's
+  docstring for why a billing-mismatch rule is structurally unreachable
+  given addr1 is already part of the UID).
 - Fabricated demo credentials: Customer.name / email / hashed_password
   have NO basis in IEEE-CIS (which has no such fields) — they exist only
   so the seeded Customer rows can demo-login once JWT auth is built
@@ -19,11 +23,12 @@ reasoning — this file just implements them):
 - Merchant identity doesn't exist in IEEE-CIS either. ProductCD (5 low-
   cardinality codes) is the closest proxy — one Merchant row is created
   per distinct ProductCD value, not per transaction.
-- Device rows are created STRICTLY: only when the source row has a match
-  in train_identity.csv with a non-null DeviceType or DeviceInfo. Most
-  transactions will have no device — this mirrors the real dataset
-  (identity data covers a minority of transactions) rather than papering
-  over it with fabricated devices.
+- Device identity (Week 2): fingerprinting + DeviceCustomerLink creation
+  is delegated to agents/device_identity.py, the SAME module
+  agents/ingestion.py uses for live transactions — see that module's
+  docstring for the fingerprint scheme (device-intrinsic when DeviceInfo
+  is specific enough, customer-scoped fallback otherwise) and why it's
+  shared rather than reimplemented here.
 - TransactionDT is a timedelta, not a timestamp. A reference start date
   of 2017-12-01 is a commonly-cited community estimate for this dataset
   (not confirmed by Vesta) — used here only to produce plausible-looking
@@ -42,8 +47,9 @@ from pathlib import Path
 import pandas as pd
 from passlib.hash import bcrypt
 
-from agents.uid import compute_uid
-from db.models import Account, Customer, Device, Merchant, Transaction
+from agents.device_identity import get_or_create_device_and_link
+from agents.uid import clean_component, compute_uid
+from db.models import Account, Customer, Merchant, Transaction
 from db.session import SessionLocal, init_db
 
 # ── Config ───────────────────────────────────────────────────────────────
@@ -86,7 +92,11 @@ TRANSACTION_COLUMNS = [
     "addr1",
     "D1",
 ]
-IDENTITY_COLUMNS = ["TransactionID", "DeviceType", "DeviceInfo"]
+# id_31 (browser string) added Week 2 — required, alongside DeviceInfo, for
+# device-intrinsic fingerprinting (agents/device_identity.py). Without it
+# every seeded device falls back to customer-scoped fingerprinting, which
+# defeats the point of the schema migration.
+IDENTITY_COLUMNS = ["TransactionID", "DeviceType", "DeviceInfo", "id_31"]
 
 
 def _fabricate_name(index: int) -> str:
@@ -187,10 +197,9 @@ def seed(df: pd.DataFrame) -> None:
 
         customer_by_uid: dict[str, Customer] = {}
         account_by_uid: dict[str, Account] = {}
-        device_by_key: dict[tuple[str, str, str], Device] = {}  # (uid, type, info) -> Device
 
         n_transactions = 0
-        n_devices = 0
+        n_devices_before = 0
         customer_counter = 0
 
         for _, row in df.iterrows():
@@ -202,6 +211,7 @@ def seed(df: pd.DataFrame) -> None:
                 customer_counter += 1
                 customer = Customer(
                     synthetic_uid=uid,
+                    billing_region=clean_component(row["addr1"]),
                     name=_fabricate_name(customer_counter),
                     email=_fabricate_email(customer_counter),
                     hashed_password=bcrypt.hash(DEMO_PASSWORD),
@@ -222,25 +232,22 @@ def seed(df: pd.DataFrame) -> None:
 
             account = account_by_uid[uid]
 
-            # ── strict Device creation: only if identity data exists ──
+            # ── device: shared helper (agents/device_identity.py), same
+            # logic path as live ingestion — strict creation, device-
+            # intrinsic fingerprint when possible, customer-scoped
+            # fallback otherwise, DeviceCustomerLink handled internally ──
             device_type = row.get("DeviceType")
             device_info = row.get("DeviceInfo")
-            device = None
-            has_identity = pd.notna(device_type) or pd.notna(device_info)
-            if has_identity:
-                device_key = (uid, str(device_type), str(device_info))
-                device = device_by_key.get(device_key)
-                if device is None:
-                    fingerprint = f"{uid}:{device_type}:{device_info}"
-                    device = Device(
-                        customer_id=customer.customer_id,
-                        device_fingerprint=fingerprint,
-                        device_type=str(device_type) if pd.notna(device_type) else "unknown",
-                    )
-                    session.add(device)
-                    session.flush()
-                    device_by_key[device_key] = device
-                    n_devices += 1
+            browser = row.get("id_31")
+            device = get_or_create_device_and_link(
+                session,
+                customer,
+                str(device_type) if pd.notna(device_type) else None,
+                str(device_info) if pd.notna(device_info) else None,
+                str(browser) if pd.notna(browser) else None,
+            )
+            if device is not None:
+                n_devices_before += 1  # counts device-bearing rows, not distinct devices (see summary query below)
 
             # ── Transaction ──
             merchant = merchant_by_code[row["ProductCD"]]
@@ -261,10 +268,24 @@ def seed(df: pd.DataFrame) -> None:
                 print(f"  ...committed {n_transactions:,} transactions so far")
 
         session.commit()
+
+        from db.models import Device, DeviceCustomerLink  # local import: summary-only query
+
+        from sqlalchemy import func
+
+        n_distinct_devices = session.query(Device).count()
+        n_shared_devices = (
+            session.query(DeviceCustomerLink.device_id)
+            .group_by(DeviceCustomerLink.device_id)
+            .having(func.count(DeviceCustomerLink.customer_id.distinct()) > 1)
+            .count()
+        )
+
         print(
             f"\nDone. Seeded {len(customer_by_uid):,} customers, "
-            f"{n_devices:,} devices, {n_transactions:,} transactions, "
-            f"{len(merchant_by_code)} merchants."
+            f"{n_distinct_devices:,} distinct devices "
+            f"({n_shared_devices:,} linked to more than one customer), "
+            f"{n_transactions:,} transactions, {len(merchant_by_code)} merchants."
         )
 
     except Exception:

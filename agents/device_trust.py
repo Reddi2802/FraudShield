@@ -4,38 +4,34 @@ Device Trust Agent — Week 2
 Rule-based / statistical device scoring (ADR-002: no ML — no device
 ground-truth label to train or validate against).
 
-SCHEMA-FORCED SCOPE REDUCTION — read before extending this file:
-ingestion.py's device_fingerprint is built as
-    f"{customer.synthetic_uid}:{device_type}:{device_info}"
-which means the UID is baked into the fingerprint itself, and Device.customer_id
-is a single FK (not a many-to-many join). Two different customers on the same
-physical device produce two different Device rows — there is no way, under
-the current schema, to observe "this device is shared across customers."
+Restored to the originally-planned three signals now that the schema
+supports them (DeviceCustomerLink many-to-many, device-intrinsic
+fingerprinting — see agents/device_identity.py):
 
-Practical consequence: the three signals originally planned —
-(1) cross-customer reuse_count, (2) is_first_seen_globally,
-(3) is_new_device_for_customer — collapse into two, because (1) is
-unobservable and (2)/(3) become identical (a device can only ever belong to
-one customer, so "first seen globally" == "new for this customer" always).
-
-This file implements what the schema actually supports:
-  - device_transaction_count : how many PRIOR transactions this specific
-                                customer has made on this specific device.
-                                A tenure/familiarity signal, not a fraud-ring
-                                signal — rename expectations accordingly.
-  - is_first_use_of_device   : true iff device_transaction_count == 0.
-  - device_age               : REAL timedelta (Device.first_seen_at is a
-                                genuine timestamp, not a dataset-relative
-                                proxy — no longer needs the "_proxy" naming
-                                from the earlier draft).
-
-If cross-customer reuse detection matters for your Network Intelligence
-story (Week 5), that requires a schema change now: either strip the UID out
-of the fingerprint (fingerprint should be a property of the DEVICE, not the
-device+customer pair) and add a proper Device<->Customer association table,
-or accept that Network Intelligence computes its own device/address graph
-independently of this table and treat Device Trust as customer-scoped only.
-That's your call to make and document — not implemented here.
+  - reuse_count              : distinct customers ever linked to this
+                                device, via DeviceCustomerLink. For a
+                                device that fell back to customer-scoped
+                                fingerprinting (generic DeviceInfo, or
+                                missing browser signal), this will always
+                                be 1 — that's correct, not a bug: we
+                                couldn't fingerprint it specifically
+                                enough to ever link a second customer to
+                                it in the first place.
+  - is_first_seen_globally   : true iff no OTHER transaction (any
+                                customer) used this device before this one.
+  - is_new_device_for_customer: true iff no PRIOR transaction by THIS
+                                customer used this device before this one.
+                                Computed from transaction history, not
+                                from DeviceCustomerLink.first_seen_at,
+                                to stay consistent with how
+                                rule_compliance.py already computes
+                                history (pure query over Transaction rows,
+                                not reliant on mutable timestamp fields
+                                that could be touched out of order in a
+                                batch/backfill run).
+  - device_age                : real timedelta, Device.first_seen_at is a
+                                genuine timestamp (global first-seen, any
+                                customer).
 """
 
 from __future__ import annotations
@@ -46,16 +42,17 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from db.models import Transaction
+from db.models import Account, DeviceCustomerLink, Transaction
 
 
 @dataclass
 class DeviceTrustResult:
     transaction_id: int
     device_id: Optional[int]
-    device_transaction_count: int          # prior txns on this device, this customer only
-    is_first_use_of_device: bool
-    device_age: Optional[timedelta]        # None if no device on this transaction
+    reuse_count: int
+    is_first_seen_globally: bool
+    is_new_device_for_customer: bool
+    device_age: Optional[timedelta]
 
     @property
     def no_device(self) -> bool:
@@ -67,14 +64,22 @@ def run_device_trust(session: Session, transaction: Transaction) -> DeviceTrustR
         return DeviceTrustResult(
             transaction_id=transaction.transaction_id,
             device_id=None,
-            device_transaction_count=0,
-            is_first_use_of_device=False,
+            reuse_count=0,
+            is_first_seen_globally=False,
+            is_new_device_for_customer=False,
             device_age=None,
         )
 
     device = transaction.device  # relationship, already loaded via FK
 
-    prior_count = (
+    reuse_count = (
+        session.query(DeviceCustomerLink.customer_id)
+        .filter(DeviceCustomerLink.device_id == transaction.device_id)
+        .distinct()
+        .count()
+    )
+
+    prior_any_customer = (
         session.query(Transaction)
         .filter(
             Transaction.device_id == transaction.device_id,
@@ -83,20 +88,33 @@ def run_device_trust(session: Session, transaction: Transaction) -> DeviceTrustR
         )
         .count()
     )
+    is_first_seen_globally = prior_any_customer == 0
+
+    customer_id = transaction.account.customer_id
+    prior_this_customer = (
+        session.query(Transaction)
+        .join(Account, Transaction.account_id == Account.account_id)
+        .filter(
+            Transaction.device_id == transaction.device_id,
+            Account.customer_id == customer_id,
+            Transaction.transaction_id != transaction.transaction_id,
+            Transaction.submitted_at < transaction.submitted_at,
+        )
+        .count()
+    )
+    is_new_device_for_customer = prior_this_customer == 0
 
     return DeviceTrustResult(
         transaction_id=transaction.transaction_id,
         device_id=transaction.device_id,
-        device_transaction_count=prior_count,
-        is_first_use_of_device=(prior_count == 0),
+        reuse_count=reuse_count,
+        is_first_seen_globally=is_first_seen_globally,
+        is_new_device_for_customer=is_new_device_for_customer,
         device_age=transaction.submitted_at - device.first_seen_at,
     )
 
 
-# NOTE: This agent currently writes nothing to the DB — it's a signal
-# producer for Risk Synthesis (Week 4), same design as before. AgentLog
-# exists in your schema specifically for "independent audit trail of every
-# agent's raw output" (per models.py's own docstring) and would be a
-# natural place to persist DeviceTrustResult per transaction — not added
-# here since it wasn't in ROADMAP.md's Week 2 checklist item for this
-# agent. Flagging as a real option, not a silent omission.
+# NOTE: still writes nothing to the DB — signal producer for Risk Synthesis
+# (Week 4). AgentLog is available for a raw-output audit trail if you want
+# it, same option flagged as before — not added here, wasn't in ROADMAP.md's
+# Week 2 checklist item for this agent.

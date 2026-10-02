@@ -4,16 +4,19 @@ Ingestion Agent.
 Week 1 scope only: validate + enrich an incoming transaction with
 customer/account/device/merchant context. Deliberately does NOT produce a
 risk decision — Risk Synthesis (week 4) and the orchestrator (LangGraph,
-week 4) don't exist yet, and this agent shouldn't guess at a shape those
-components haven't defined. See ROADMAP.md / chat history: the API
-response schema has no `decision` field until week 4, on purpose, so
-adding it now doesn't force a schema migration later.
+week 4) don't exist yet. See ROADMAP.md / DECISIONS.md.
 
-Identity handling mirrors scripts/seed_db.py's get-or-create pattern, but
-operates on one transaction at a time (a live request) rather than a
-batch loaded from CSV. If this logic starts to drift between the two
-call sites, that's a signal to extract a shared helper — not urgent at
-Week 1 scale.
+Week 2 update: Customer.billing_region is now persisted at customer
+creation (raw addr1, cleaned the same way as the UID computation — see
+agents/uid.py's clean_component). NOTE: this is stored as customer
+profile context, NOT as input to a "billing mismatch" rule — addr1 is
+part of the synthetic_uid itself, so a transaction with a different addr1
+resolves to a different customer entirely; a same-customer mismatch is
+structurally unreachable. See DECISIONS.md for the full reasoning.
+
+Device identity (fingerprinting + DeviceCustomerLink) is delegated to
+agents/device_identity.py, shared with scripts/seed_db.py, so the two
+call sites can't drift apart (see that module's docstring).
 """
 
 from __future__ import annotations
@@ -23,7 +26,8 @@ from datetime import datetime, timezone
 from passlib.hash import bcrypt
 from sqlalchemy.orm import Session
 
-from agents.uid import compute_uid
+from agents.device_identity import get_or_create_device_and_link
+from agents.uid import clean_component, compute_uid
 from db.models import Account, Customer, Device, Merchant, Transaction
 
 # Same rationale as seed_db.py: fabricated, not a real secret, exists only
@@ -37,7 +41,9 @@ class IngestionError(ValueError):
     """Raised when an incoming transaction fails validation."""
 
 
-def _get_or_create_customer(session: Session, uid: str, card6: str | None) -> Customer:
+def _get_or_create_customer(
+    session: Session, uid: str, card6: str | None, addr1: float | None
+) -> Customer:
     customer = session.query(Customer).filter_by(synthetic_uid=uid).one_or_none()
     if customer is not None:
         return customer
@@ -48,6 +54,7 @@ def _get_or_create_customer(session: Session, uid: str, card6: str | None) -> Cu
     # existing row count query.
     customer = Customer(
         synthetic_uid=uid,
+        billing_region=clean_component(addr1),
         name=f"Customer {uid}",
         email=f"{uid}@example.invalid",
         hashed_password=bcrypt.hash(_PLACEHOLDER_PASSWORD),
@@ -92,33 +99,6 @@ def _get_or_create_merchant(session: Session, product_cd: str) -> Merchant:
     return merchant
 
 
-def _get_or_create_device(
-    session: Session,
-    customer: Customer,
-    device_type: str | None,
-    device_info: str | None,
-) -> Device | None:
-    # Strict, same as seed_db.py: no device row at all if no identity
-    # signal was submitted with this transaction.
-    if device_type is None and device_info is None:
-        return None
-
-    fingerprint = f"{customer.synthetic_uid}:{device_type}:{device_info}"
-    device = session.query(Device).filter_by(device_fingerprint=fingerprint).one_or_none()
-    if device is not None:
-        device.last_seen_at = datetime.now(timezone.utc)
-        return device
-
-    device = Device(
-        customer_id=customer.customer_id,
-        device_fingerprint=fingerprint,
-        device_type=device_type or "unknown",
-    )
-    session.add(device)
-    session.flush()
-    return device
-
-
 def process_transaction(
     session: Session,
     *,
@@ -131,10 +111,11 @@ def process_transaction(
     product_cd: str,
     device_type: str | None = None,
     device_info: str | None = None,
+    browser: str | None = None,
 ) -> Transaction:
     """
     Validate and enrich one incoming transaction, persisting it and any
-    newly-required Customer/Account/Device/Merchant rows.
+    newly-required Customer/Account/Device/DeviceCustomerLink/Merchant rows.
 
     Returns the created Transaction ORM object (caller/route is
     responsible for shaping the API response and committing/rolling back).
@@ -148,10 +129,10 @@ def process_transaction(
 
     uid = compute_uid(card1, addr1, d1)
 
-    customer = _get_or_create_customer(session, uid, card6)
+    customer = _get_or_create_customer(session, uid, card6, addr1)
     account = _get_account(session, customer)
     merchant = _get_or_create_merchant(session, product_cd)
-    device = _get_or_create_device(session, customer, device_type, device_info)
+    device = get_or_create_device_and_link(session, customer, device_type, device_info, browser)
 
     transaction = Transaction(
         account_id=account.account_id,

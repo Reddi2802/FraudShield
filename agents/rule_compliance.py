@@ -4,12 +4,18 @@ Rule Compliance Agent — Week 2
 Deterministic checks against a transaction: velocity and amount.
 Writes RuleViolation rows for any rule that fires.
 
-SCOPE NOTE — "geo" rule dropped, not deferred silently:
-IEEE-CIS's addr1 is consumed by agents/uid.py to build synthetic_uid but is
-never persisted on Transaction, Account, or Customer. There is currently no
-stored billing-address field to compare against. Do not re-add a "geo" rule
-without first deciding where addr1 gets stored (Customer? Account?) and
-writing that as an ADR — this file intentionally does not guess.
+SCOPE NOTE — "geo"/billing-mismatch rule dropped, permanently, not pending
+a schema fix:
+Customer.billing_region (added Week 2) stores the raw addr1 used in the
+UID computation. But addr1 IS PART of synthetic_uid = card1+addr1+D1 — a
+transaction with a different addr1 resolves to a DIFFERENT synthetic_uid,
+i.e. a different (or new) Customer, before this rule would ever run. A
+"does this transaction's addr1 match this customer's stored addr1" check
+is structurally unreachable: by the time you have a Customer object, its
+addr1 is, by construction, identical across every transaction that
+resolves to it. This isn't a missing-data gap — don't re-add it if
+billing_region later exists; the geometry of the UID itself rules it out.
+billing_region is kept for customer-profile/explanation-text use only.
 
 Velocity uses REAL datetimes (Transaction.submitted_at), not a dataset-
 relative proxy — this schema stores real timezone-aware UTC timestamps at

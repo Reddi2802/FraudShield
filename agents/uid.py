@@ -39,7 +39,7 @@ from numbers import Real
 _MISSING_TOKEN = "NA"
 
 
-def _clean(value: object) -> str:
+def clean_component(value: object) -> str:
     """
     Normalize one raw IEEE-CIS field into a stable string token.
 
@@ -73,4 +73,4 @@ def compute_uid(card1: object, addr1: object, d1: object) -> str:
         A stable string key, e.g. "13926-315-2". Two rows produce the
         same UID iff all three cleaned tokens match exactly.
     """
-    return f"{_clean(card1)}-{_clean(addr1)}-{_clean(d1)}"
+    return f"{clean_component(card1)}-{clean_component(addr1)}-{clean_component(d1)}"

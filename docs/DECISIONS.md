@@ -89,6 +89,24 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 **Why this isn't a training-data change:** Both bounds are seeding/demo-data policy only. `ml/train_isolation_forest.py` (week 3) trains directly against the unfiltered raw CSV, per ADR-012.
 
+## ADR-014 — Device identity: many-to-many schema + device-intrinsic fingerprinting
+
+**Context:** Week 1's Device.customer_id was a single FK, and the device fingerprint (`f"{uid}:{type}:{info}"`) baked the customer's synthetic_uid into the key itself — making cross-customer device sharing (the actual fraud-ring precursor signal ADR-002 was written around) structurally unobservable, not just unimplemented.
+
+**Decision:** Device<->Customer changed to many-to-many via a new DeviceCustomerLink table (14 entities total, up from the Lab5-diagrammed 13 — not yet reconciled in the StarUML diagram). Fingerprint logic (agents/device_identity.py, shared between ingestion.py and seed_db.py) now builds a device-intrinsic fingerprint (DeviceInfo + id_31 browser string) when both are present and DeviceInfo isn't one of 7 generic OS-only buckets (Windows, iOS Device, MacOS, Trident/7.0, rv:11.0/57.0/59.0); otherwise falls back to the original customer-scoped scheme (excluding browser from that fallback key specifically — an earlier version included it and fragmented ~75% of generic-device customers across browser-version churn before being caught and fixed).
+
+**Evidence (real data, not assumed):** Specific DeviceInfo+browser combinations show median 1 distinct UID per fingerprint (2,251 of 2,351 fingerprints, 95.7%) — genuine identity signal. Generic buckets show median 15, max 2,030 distinct UIDs per fingerprint — unusable as identity, would manufacture false cross-customer links if not excluded. Seeded result: 3,253 distinct devices (down from 3,565 under the old scheme — net fragmentation reduction, as expected), 158 linked to more than one customer.
+
+**Rejected alternative:** Including browser in the fallback fingerprint. Technically simpler, but browser-version churn across a single customer's own sessions is common and not a "new device" — doing this inflated the seeded device count to 5,175 before being caught via a sanity check (the count should drop under merging, not rise) and fixed.
+
+## ADR-015 — Billing/geo rule rejected (structural, not deferred)
+
+**Context:** A billing-address-mismatch rule was planned for Rule Compliance. addr1 is part of synthetic_uid = card1+addr1+D1 — a transaction with a different addr1 resolves to a different customer before any mismatch comparison could run, making a per-transaction billing rule structurally unreachable, not just unimplemented.
+
+**Decision:** No billing/geo rule, in Rule Compliance or anywhere else. Customer.billing_region is kept as profile/explanation-text context only, never a RuleViolation trigger.
+
+**Rejected alternatives, both checked against real data before rejecting:** (1) Decoupling identity from addr1 to recover the rule — rejected: weakens the already-fragile 3-anchor UID (more collision risk) for a feature that, per (2), wouldn't produce good signal anyway. (2) Routing addr1 into Network Intelligence (Week 5) as a shared-attribute graph edge — rejected: addr1 has only 332 distinct values across 590K transactions; even at the most aggressive exclusion threshold, 88.7% of rows fall into generic high-degree buckets, versus 85.3% usable after the equivalent device-fingerprint exclusion. addr1 is a masked regional code, not a granular address — there's no specific-enough tail to recover, unlike DeviceInfo+browser.
+
 ---
 
 ## Open items (revisit as the project progresses)

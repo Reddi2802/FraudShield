@@ -6,7 +6,7 @@ from fastapi import FastAPI
 
 # NOTE: this import is not unused, even though nothing below references
 # `models` directly by name. Importing it executes every class body in
-# db/models.py, which registers all 13 tables on Base.metadata. Without
+# db/models.py, which registers all 14 tables on Base.metadata. Without
 # this import, init_db()'s create_all() would run "successfully" but
 # silently create zero (or only some) tables. See chat / DECISIONS.md.
 import db.models  # noqa: F401

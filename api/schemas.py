@@ -32,6 +32,12 @@ class TransactionRequest(BaseModel):
 
     device_type: str | None = None
     device_info: str | None = None
+    # Browser+version string (IEEE-CIS id_31 equivalent, e.g. "chrome 63.0").
+    # Week 2: needed alongside device_info for device-intrinsic
+    # fingerprinting (agents/device_identity.py) — without it, this
+    # transaction's device falls back to customer-scoped fingerprinting
+    # and can never be linked to a second customer, even if it should be.
+    browser: str | None = None
 
     @field_validator("currency")
     @classmethod

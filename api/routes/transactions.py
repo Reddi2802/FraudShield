@@ -27,6 +27,7 @@ def submit_transaction(
             product_cd=payload.product_cd,
             device_type=payload.device_type,
             device_info=payload.device_info,
+            browser=payload.browser,
         )
         session.commit()
     except IngestionError as exc:

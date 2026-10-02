@@ -20,7 +20,7 @@ from sqlalchemy.pool import StaticPool
 from db.base import Base
 
 # Importing db.models is required, not decorative — it executes every
-# model class body, which registers all 13 tables on Base.metadata.
+# model class body, which registers all 14 tables on Base.metadata.
 # Without this import, create_all() below would silently create zero
 # tables. Same gotcha as api/main.py — see the comment there.
 import db.models  # noqa: F401
