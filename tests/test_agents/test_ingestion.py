@@ -20,6 +20,10 @@ VALID_KWARGS = dict(
     card1=13926.0,
     addr1=315.0,
     d1=2.0,
+    # Fixed transaction_dt makes the resulting UID deterministic across
+    # test runs (D1n = floor(864000/86400 - 2) = 8). Without this, a test
+    # relying on real now() would compute a different D1n every day.
+    transaction_dt=864000.0,
     card6="credit",
     amount=125.50,
     currency="USD",
@@ -35,7 +39,7 @@ def test_valid_transaction_creates_customer_account_and_transaction(db_session):
     assert transaction.amount == 125.50
     assert transaction.currency == "USD"
 
-    customer = db_session.query(Customer).filter_by(synthetic_uid="13926-315-2").one()
+    customer = db_session.query(Customer).filter_by(synthetic_uid="13926-315-8").one()
     assert transaction.account.customer_id == customer.customer_id
 
 

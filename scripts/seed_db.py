@@ -48,7 +48,7 @@ import pandas as pd
 from passlib.hash import bcrypt
 
 from agents.device_identity import get_or_create_device_and_link
-from agents.uid import clean_component, compute_uid
+from agents.uid import REFERENCE_START, clean_component, compute_uid
 from db.models import Account, Customer, Merchant, Transaction
 from db.session import SessionLocal, init_db
 
@@ -79,7 +79,6 @@ MAX_TRANSACTIONS_PER_UID = 150  # exclude implausibly high-count UIDs.
 # and adjust if the real distribution suggests otherwise.
 RANDOM_SEED = 42
 DEMO_PASSWORD = "ChangeMe123!"  # shared demo credential, not a real secret
-REFERENCE_START = datetime(2017, 12, 1, tzinfo=timezone.utc)  # community-estimated TransactionDT epoch
 COMMIT_BATCH_SIZE = 500
 
 TRANSACTION_COLUMNS = [
@@ -131,7 +130,8 @@ def load_source_data() -> pd.DataFrame:
 
     print("Computing synthetic UID (card1+addr1+D1) per row...")
     merged["synthetic_uid"] = merged.apply(
-        lambda row: compute_uid(row["card1"], row["addr1"], row["D1"]), axis=1
+        lambda row: compute_uid(row["card1"], row["addr1"], row["D1"], row["TransactionDT"] / 86400),
+        axis=1,
     )
 
     return merged

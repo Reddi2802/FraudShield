@@ -46,12 +46,12 @@ def test_all_documented_generic_values_trigger_fallback():
 def test_specific_device_links_across_two_different_customers(db_session):
     first = process_transaction(
         db_session, card1=11111.0, addr1=100.0, d1=1.0, card6="credit",
-        amount=50.0, currency="USD", product_cd="W", **SPECIFIC_DEVICE,
+        amount=50.0, currency="USD", product_cd="W", transaction_dt=1000000.0, **SPECIFIC_DEVICE,
     )
     db_session.commit()
     second = process_transaction(
         db_session, card1=22222.0, addr1=200.0, d1=5.0, card6="debit",
-        amount=75.0, currency="USD", product_cd="W", **SPECIFIC_DEVICE,
+        amount=75.0, currency="USD", product_cd="W", transaction_dt=1100000.0, **SPECIFIC_DEVICE,
     )
     db_session.commit()
 
@@ -66,12 +66,12 @@ def test_specific_device_links_across_two_different_customers(db_session):
 def test_generic_device_does_not_link_across_customers(db_session):
     first = process_transaction(
         db_session, card1=33333.0, addr1=300.0, d1=9.0, card6="credit",
-        amount=20.0, currency="USD", product_cd="C", **GENERIC_DEVICE,
+        amount=20.0, currency="USD", product_cd="C", transaction_dt=1000000.0, **GENERIC_DEVICE,
     )
     db_session.commit()
     second = process_transaction(
         db_session, card1=44444.0, addr1=400.0, d1=3.0, card6="credit",
-        amount=30.0, currency="USD", product_cd="C", **GENERIC_DEVICE,
+        amount=30.0, currency="USD", product_cd="C", transaction_dt=1100000.0, **GENERIC_DEVICE,
     )
     db_session.commit()
 
@@ -85,7 +85,7 @@ def test_generic_device_does_not_link_across_customers(db_session):
 def test_browser_version_churn_does_not_fragment_same_customers_device(db_session):
     """Regression guard: the fallback fingerprint must exclude browser, or a
     customer's own browser updates spawn phantom 'new devices' (ADR-014)."""
-    kwargs = dict(card1=55555.0, addr1=500.0, d1=1.0, card6="credit",
+    kwargs = dict(card1=55555.0, addr1=500.0, d1=1.0, card6="credit", transaction_dt=1000000.0,
                   amount=10.0, currency="USD", product_cd="W", device_type="desktop", device_info="Windows")
 
     t1 = process_transaction(db_session, browser="chrome 62.0", **kwargs)
@@ -104,9 +104,13 @@ def test_device_trust_signals_for_repeat_use_by_same_customer(db_session):
     kwargs = dict(card1=66666.0, addr1=600.0, d1=2.0, card6="debit",
                   amount=15.0, currency="USD", product_cd="W", **SPECIFIC_DEVICE)
 
-    first = process_transaction(db_session, **kwargs)
+    # Distinct transaction_dt per call — same D1n (floor uses whole days, and
+    # 100 seconds apart doesn't cross a day boundary) so it's still the same
+    # customer, but a real time gap so submitted_at ordering is meaningful
+    # for is_first_seen_globally / is_new_device_for_customer below.
+    first = process_transaction(db_session, transaction_dt=1000000.0, **kwargs)
     db_session.commit()
-    second = process_transaction(db_session, **kwargs)
+    second = process_transaction(db_session, transaction_dt=1000100.0, **kwargs)
     db_session.commit()
 
     first_result = run_device_trust(db_session, first)

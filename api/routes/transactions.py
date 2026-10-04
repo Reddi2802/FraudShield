@@ -28,6 +28,7 @@ def submit_transaction(
             device_type=payload.device_type,
             device_info=payload.device_info,
             browser=payload.browser,
+            transaction_dt=payload.transaction_dt,
         )
         session.commit()
     except IngestionError as exc:

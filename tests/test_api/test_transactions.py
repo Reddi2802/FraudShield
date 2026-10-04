@@ -41,6 +41,7 @@ VALID_PAYLOAD = {
     "card1": 13926.0,
     "addr1": 315.0,
     "d1": 2.0,
+    "transaction_dt": 864000,  # fixes D1n = 8, deterministic UID across runs
     "card6": "credit",
     "amount": 125.50,
     "currency": "usd",
@@ -66,7 +67,7 @@ def test_submit_transaction_returns_201_with_expected_shape(client):
         "merchant_id", "device_id", "amount", "currency", "submitted_at",
     }
     assert expected_keys.issubset(body.keys())
-    assert body["synthetic_uid"] == "13926-315-2"
+    assert body["synthetic_uid"] == "13926-315-8"
     assert body["currency"] == "USD"  # lowercase input, uppercased by the schema validator
     assert body["device_id"] is not None
 

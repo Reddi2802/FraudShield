@@ -17,18 +17,33 @@ structurally unreachable. See DECISIONS.md for the full reasoning.
 Device identity (fingerprinting + DeviceCustomerLink) is delegated to
 agents/device_identity.py, shared with scripts/seed_db.py, so the two
 call sites can't drift apart (see that module's docstring).
+
+Week 3 update (ADR-011 amendment): compute_uid now needs days_since_epoch,
+because the UID's D1 component was normalized (D1n) to fix a fragmentation
+bug — see agents/uid.py's module docstring for the full reasoning and the
+real-data numbers behind it. This agent accepts an optional
+`transaction_dt` (seconds, same units as IEEE-CIS's TransactionDT) so a
+demo/replay client can simulate historical timing and get a UID consistent
+with the seeded data. Without it, a real live transaction still works, but
+its D1n — and therefore its UID — is anchored to the actual current date,
+not the dataset's ~6-month window, so it will NOT match any seeded
+customer even if the same card1/addr1/D1 were reused. That's an accepted,
+documented limitation of using a calendar-anchored identity component for
+genuinely live (non-replay) traffic, not a bug — IEEE-CIS's D1 has no real
+production equivalent outside this dataset in the first place.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from passlib.hash import bcrypt
 from sqlalchemy.orm import Session
 
 from agents.device_identity import get_or_create_device_and_link
-from agents.uid import clean_component, compute_uid
+from agents.uid import clean_component, compute_uid, days_since_epoch
 from db.models import Account, Customer, Device, Merchant, Transaction
+from agents.uid import REFERENCE_START
 
 # Same rationale as seed_db.py: fabricated, not a real secret, exists only
 # so a newly-created (never-before-seen) Customer has *something* in
@@ -112,10 +127,18 @@ def process_transaction(
     device_type: str | None = None,
     device_info: str | None = None,
     browser: str | None = None,
+    transaction_dt: float | None = None,
 ) -> Transaction:
     """
     Validate and enrich one incoming transaction, persisting it and any
     newly-required Customer/Account/Device/DeviceCustomerLink/Merchant rows.
+
+    transaction_dt: optional simulated TransactionDT (seconds, IEEE-CIS
+    units). When provided, both the UID's D1n component AND submitted_at
+    are derived from it, so a CSV-replay demo gets real, consistent
+    inter-transaction time gaps (not everything collapsing to ~now()).
+    When omitted, falls back to real current time for both — see this
+    module's docstring for what that means for UID matching.
 
     Returns the created Transaction ORM object (caller/route is
     responsible for shaping the API response and committing/rolling back).
@@ -127,7 +150,14 @@ def process_transaction(
     if not product_cd:
         raise IngestionError("product_cd is required")
 
-    uid = compute_uid(card1, addr1, d1)
+    if transaction_dt is not None:
+        submitted_at = REFERENCE_START + timedelta(seconds=transaction_dt)
+        dse = transaction_dt / 86400
+    else:
+        submitted_at = datetime.now(timezone.utc)
+        dse = days_since_epoch(submitted_at)
+
+    uid = compute_uid(card1, addr1, d1, dse)
 
     customer = _get_or_create_customer(session, uid, card6, addr1)
     account = _get_account(session, customer)
@@ -140,7 +170,7 @@ def process_transaction(
         device_id=device.device_id if device is not None else None,
         amount=amount,
         currency=currency.upper(),
-        submitted_at=datetime.now(timezone.utc),
+        submitted_at=submitted_at,
     )
     session.add(transaction)
     session.flush()

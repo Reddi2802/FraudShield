@@ -25,6 +25,13 @@ class TransactionRequest(BaseModel):
     addr1: float | None = None
     d1: float | None = Field(default=None, description="Days since card first used (IEEE-CIS D1)")
     card6: str | None = Field(default=None, description="'credit' or 'debit', if known")
+    # Week 3 (ADR-011 amendment): simulated TransactionDT, seconds, same
+    # units as IEEE-CIS. Drives both the UID's D1n component and
+    # submitted_at, so a CSV-replay demo produces real inter-transaction
+    # time gaps instead of everything collapsing to ~now(). Omit for a
+    # genuinely live transaction — see agents/ingestion.py's docstring for
+    # what that means for UID matching against seeded customers.
+    transaction_dt: float | None = None
 
     amount: float
     currency: str = "USD"
