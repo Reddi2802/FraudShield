@@ -149,7 +149,7 @@ def _get_prior_transactions(session: Session, transaction: Transaction) -> list[
 def compute_global_amount_p99(session: Session) -> Optional[float]:
     """
     Global 99th percentile of Transaction.amount, recomputed on every call.
-    Fine at Week 2 / ~31K-row seeded-DB scale. Revisit caching (compute
+    Fine at Week 2 / ~22K-row seeded-DB scale (21,832 transactions). Revisit caching (compute
     once at startup, or in scripts/seed_db.py and store somewhere) before
     Week 7's dashboard puts this on a hot path.
     """
