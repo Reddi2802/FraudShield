@@ -41,9 +41,8 @@ from passlib.hash import bcrypt
 from sqlalchemy.orm import Session
 
 from agents.device_identity import get_or_create_device_and_link
-from agents.uid import clean_component, compute_uid, days_since_epoch
-from db.models import Account, Customer, Device, Merchant, Transaction
-from agents.uid import REFERENCE_START
+from agents.uid import REFERENCE_START, clean_component, compute_uid, days_since_epoch
+from db.models import Account, Customer, Merchant, Transaction
 
 # Same rationale as seed_db.py: fabricated, not a real secret, exists only
 # so a newly-created (never-before-seen) Customer has *something* in
@@ -162,7 +161,9 @@ def process_transaction(
     customer = _get_or_create_customer(session, uid, card6, addr1)
     account = _get_account(session, customer)
     merchant = _get_or_create_merchant(session, product_cd)
-    device = get_or_create_device_and_link(session, customer, device_type, device_info, browser)
+    device = get_or_create_device_and_link(
+        session, customer, device_type, device_info, browser, seen_at=submitted_at
+    )
 
     transaction = Transaction(
         account_id=account.account_id,

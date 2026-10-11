@@ -4,8 +4,11 @@ Seed the SQLite DB from IEEE-CIS train_transaction.csv / train_identity.csv.
 Decisions baked into this script (see docs/DECISIONS.md for the full
 reasoning — this file just implements them):
 
-- Identity (ADR-011): Customer.synthetic_uid = agents.uid.compute_uid on
-  (card1, addr1, D1). This is a probabilistic proxy, not a verified key.
+- Identity (ADR-011, amended Week 3): Customer.synthetic_uid =
+  agents.uid.compute_uid on (card1, addr1, D1n), where
+  D1n = floor(TransactionDT/86400 - D1). This is a probabilistic proxy,
+  not a verified key. Raw D1 is a tenure counter that drifts daily and
+  fragmented single cards across UIDs — see agents/uid.py.
 - Customer.billing_region (Week 2) persists the cleaned addr1 value —
   profile context only, NOT a rule-trigger field (see rule_compliance.py's
   docstring for why a billing-mismatch rule is structurally unreachable
@@ -41,7 +44,7 @@ Run with:
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -60,10 +63,10 @@ IDENTITY_CSV = DATA_DIR / "train_identity.csv"
 
 N_CUSTOMERS = 1500  # per project decision: medium volume
 MIN_TRANSACTIONS_PER_UID = 8  # exclude thin-history UIDs from the demo DB —
-# a per-customer Isolation Forest (week 3) needs prior transactions to
-# establish "normal" for that customer, and the raw card1+addr1+D1 UID
-# fragments heavily across the full dataset (246K distinct UIDs / ~590K
-# rows, ~2.4 txns/UID on average). Uniform-random sampling over all UIDs
+# Behavioral Analysis (week 3) builds per-UID, time-gated history features
+# and needs prior transactions to establish "normal" for that customer.
+# Even with the D1n fix, most UIDs across the full dataset are still thin
+# (57.4% are single-transaction), so uniform-random sampling over all UIDs
 # mostly picks thin ones. This filter is a SEEDING/DEMO-DATA POLICY only —
 # it does not change the UID definition (ADR-011) or how Behavioral
 # Analysis trains from the raw CSV in week 3.
@@ -128,7 +131,7 @@ def load_source_data() -> pd.DataFrame:
     print("Joining on TransactionID (left join — most transactions have no identity row)...")
     merged = transactions.merge(identity, on="TransactionID", how="left")
 
-    print("Computing synthetic UID (card1+addr1+D1) per row...")
+    print("Computing synthetic UID (card1+addr1+D1n) per row...")
     merged["synthetic_uid"] = merged.apply(
         lambda row: compute_uid(row["card1"], row["addr1"], row["D1"], row["TransactionDT"] / 86400),
         axis=1,
@@ -236,6 +239,13 @@ def seed(df: pd.DataFrame) -> None:
             # logic path as live ingestion — strict creation, device-
             # intrinsic fingerprint when possible, customer-scoped
             # fallback otherwise, DeviceCustomerLink handled internally ──
+            # submitted_at must be computed BEFORE the device call: Device /
+            # DeviceCustomerLink first_seen_at / last_seen_at are stamped
+            # from it (seen_at), not from the wall clock. Otherwise replayed
+            # devices get 2026 timestamps against 2017-2018 transactions and
+            # Device Trust's device_age goes hugely negative.
+            submitted_at = REFERENCE_START + timedelta(seconds=int(row["TransactionDT"]))
+
             device_type = row.get("DeviceType")
             device_info = row.get("DeviceInfo")
             browser = row.get("id_31")
@@ -245,13 +255,13 @@ def seed(df: pd.DataFrame) -> None:
                 str(device_type) if pd.notna(device_type) else None,
                 str(device_info) if pd.notna(device_info) else None,
                 str(browser) if pd.notna(browser) else None,
+                seen_at=submitted_at,
             )
             if device is not None:
                 n_devices_before += 1  # counts device-bearing rows, not distinct devices (see summary query below)
 
             # ── Transaction ──
             merchant = merchant_by_code[row["ProductCD"]]
-            submitted_at = REFERENCE_START + timedelta(seconds=int(row["TransactionDT"]))
             transaction = Transaction(
                 account_id=account.account_id,
                 merchant_id=merchant.merchant_id,

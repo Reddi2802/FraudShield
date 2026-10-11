@@ -28,16 +28,16 @@ are the things you'll be asked to defend:
 
 Identity note (ADR-011 / ADR-012):
 - Customer.synthetic_uid is the join key between IEEE-CIS-derived identity
-  (card1+addr1+D1, see agents/uid.py) and this ORM's Customer row. It is a
+  (card1+addr1+D1n, see agents/uid.py) and this ORM's Customer row. It is a
   probabilistic proxy, not a verified identity key — see ADR-011 for
   documented limitations. Customer.name / email / hashed_password are
   FABRICATED at seed time (scripts/seed_db.py) for demo-login purposes
   only; IEEE-CIS provides no real name, email, or credential for anyone.
 - Customer.billing_region persists the raw addr1 value used in the UID
   computation (previously computed into the UID and discarded — see
-  chat, week 2). Enables check_billing_mismatch in Rule Compliance:
-  comparing an incoming transaction's addr1 against the customer's
-  established billing_region.
+  chat, week 2). Profile/explanation context ONLY — not a rule trigger.
+  A billing-mismatch rule is structurally unreachable because addr1 is
+  part of synthetic_uid (see ADR-015).
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ class Customer(Base):
     __tablename__ = "customers"
 
     customer_id: Mapped[int] = mapped_column(primary_key=True)
-    # ADR-011 join key: card1+addr1+D1 -> string, computed by agents/uid.py.
+    # ADR-011 join key: card1+addr1+D1n -> string, computed by agents/uid.py.
     # unique+indexed because both ingestion.py and seed_db.py look up
     # "does a Customer with this UID already exist" on every transaction.
     synthetic_uid: Mapped[str] = mapped_column(String(64), unique=True, index=True)
@@ -126,7 +126,7 @@ class Device(Base):
     # longer owned by exactly one Customer — see DeviceCustomerLink below.
     # device_fingerprint is now built from device-intrinsic signals
     # (DeviceInfo + id_31) where possible, NOT customer identity — see
-    # agents/ingestion.py._get_or_create_device for the exact rule,
+    # agents/device_identity.py for the exact rule,
     # including the generic-OS-bucket exclusion fallback.
     device_fingerprint: Mapped[str] = mapped_column(String(255), unique=True)
     device_type: Mapped[str] = mapped_column(String(50))  # e.g. "mobile", "desktop"

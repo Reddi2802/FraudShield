@@ -79,16 +79,28 @@ def build_device_fingerprint(
     return f"{synthetic_uid}:{device_type}:{device_info}", False
 
 
+def _aware(dt: datetime) -> datetime:
+    """SQLite returns naive datetimes on reload; treat them as UTC."""
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
 def get_or_create_device_and_link(
     session: Session,
     customer: Customer,
     device_type: str | None,
     device_info: str | None,
     browser: str | None = None,
+    seen_at: datetime | None = None,
 ) -> Device | None:
     """
     Strict, same as Week 1: no Device row at all if no identity signal was
     submitted with this transaction.
+
+    seen_at: the transaction's own timestamp (submitted_at). Replay/seed
+    callers MUST pass it — otherwise first_seen_at is stamped with the real
+    wall clock (2026) while the transactions are dated 2017-2018, and Device
+    Trust's device_age goes hugely negative. Defaults to now() only for
+    genuinely live traffic.
 
     Always creates/reuses a DeviceCustomerLink row alongside the Device —
     this is what makes reuse_count queryable later, instead of needing a
@@ -101,7 +113,7 @@ def get_or_create_device_and_link(
         customer.synthetic_uid, device_type, device_info, browser
     )
 
-    now = datetime.now(timezone.utc)
+    now = _aware(seen_at) if seen_at is not None else datetime.now(timezone.utc)
 
     device = session.query(Device).filter_by(device_fingerprint=fingerprint).one_or_none()
     if device is None:
@@ -114,7 +126,10 @@ def get_or_create_device_and_link(
         session.add(device)
         session.flush()
     else:
-        device.last_seen_at = now
+        # min/max so out-of-order rows (batch seeding) can't move
+        # first_seen_at forward or last_seen_at backward.
+        device.first_seen_at = min(_aware(device.first_seen_at), now)
+        device.last_seen_at = max(_aware(device.last_seen_at), now)
 
     link = (
         session.query(DeviceCustomerLink)
@@ -131,6 +146,7 @@ def get_or_create_device_and_link(
         session.add(link)
         session.flush()
     else:
-        link.last_seen_at = now
+        link.first_seen_at = min(_aware(link.first_seen_at), now)
+        link.last_seen_at = max(_aware(link.last_seen_at), now)
 
     return device
