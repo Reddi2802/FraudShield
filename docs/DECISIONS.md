@@ -69,6 +69,8 @@ This log records why this system is built the way it is. The original SE lab sub
 UID = card1+addr1+D1, chosen for consensus and simplicity; revisit at week 3 if per-UID transaction-count distribution shows pathological fragmentation or collision.
 Observed at seed time: high-count UID collisions are concentrated in rows with missing addr1 and D1=0 — e.g. one UID matched 7,198 rows under this pattern. Confirms the predicted collision risk; the [8,150] seeding range (see scripts/seed_db.py) was chosen specifically to exclude these.
 
+Amendment (Week 3): raw D1 is a tenure counter that advances daily, so the same card produced a different UID on different days. UID is now card1 + addr1 + D1n, D1n = floor(TransactionDT/86400 - D1). Real-data check: single-transaction UIDs fell from 73.3% to 57.4%; worst collision outlier from 7,198 to 1,414 rows. agents/uid.py owns REFERENCE_START (single source of truth for the TransactionDT epoch).
+
 ## ADR-012 — Per-UID features must be time-gated, not full-history
 
 **Context:** Behavioral Analysis (ADR-011's UID) needs per-customer aggregate features (avg transaction amount, D-column stats, transaction count) to score behavior. Computing these from a customer's *entire* transaction history — including transactions after the one being scored — leaks future data into the present. This doesn't error out; it just produces misleadingly strong validation scores that won't hold up in production, where future transactions don't exist yet at scoring time.
@@ -89,6 +91,8 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 **Why this isn't a training-data change:** Both bounds are seeding/demo-data policy only. `ml/train_isolation_forest.py` (week 3) trains directly against the unfiltered raw CSV, per ADR-012.
 
+Amendment (Week 3, after the D1n fix): the [8,150] pool grew from 6,739 to 14,493 candidate UIDs; the top collision outlier shrank from 7,198 to 1,414 rows. Bounds unchanged. The 1,500 seeded customers now carry 21,832 transactions. The "median=1 / 246,418 UIDs" figures above describe the pre-fix raw-D1 UID and are historical.
+
 ## ADR-014 — Device identity: many-to-many schema + device-intrinsic fingerprinting
 
 **Context:** Week 1's Device.customer_id was a single FK, and the device fingerprint (`f"{uid}:{type}:{info}"`) baked the customer's synthetic_uid into the key itself — making cross-customer device sharing (the actual fraud-ring precursor signal ADR-002 was written around) structurally unobservable, not just unimplemented.
@@ -99,6 +103,8 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 **Rejected alternative:** Including browser in the fallback fingerprint. Technically simpler, but browser-version churn across a single customer's own sessions is common and not a "new device" — doing this inflated the seeded device count to 5,175 before being caught via a sanity check (the count should drop under merging, not rise) and fixed.
 
+Amendment (Week 3): the seeded numbers above (3,253 devices, 158 linked to >1 customer) were measured under raw-D1 UIDs and a different sampled population. Re-seeded under D1n UIDs: 1,359 distinct devices, 112 linked to more than one customer. Not directly comparable — the customer population changed, not just the fingerprint logic. Device/DeviceCustomerLink first_seen_at/last_seen_at now come from the transaction's own timestamp (seen_at), not the wall clock (ADR-016). Only 17.5% of seeded transactions (3,831 of 21,832) carry a device, because most IEEE-CIS transactions have no identity row.
+
 ## ADR-015 — Billing/geo rule rejected (structural, not deferred)
 
 **Context:** A billing-address-mismatch rule was planned for Rule Compliance. addr1 is part of synthetic_uid = card1+addr1+D1 — a transaction with a different addr1 resolves to a different customer before any mismatch comparison could run, making a per-transaction billing rule structurally unreachable, not just unimplemented.
@@ -107,9 +113,16 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 **Rejected alternatives, both checked against real data before rejecting:** (1) Decoupling identity from addr1 to recover the rule — rejected: weakens the already-fragile 3-anchor UID (more collision risk) for a feature that, per (2), wouldn't produce good signal anyway. (2) Routing addr1 into Network Intelligence (Week 5) as a shared-attribute graph edge — rejected: addr1 has only 332 distinct values across 590K transactions; even at the most aggressive exclusion threshold, 88.7% of rows fall into generic high-degree buckets, versus 85.3% usable after the equivalent device-fingerprint exclusion. addr1 is a masked regional code, not a granular address — there's no specific-enough tail to recover, unlike DeviceInfo+browser.
 
+## ADR-016 — Time is transaction-driven and always UTC-aware
+
+**Context:** Replaying IEEE-CIS rows through the API stamps submitted_at from the optional transaction_dt (REFERENCE_START + seconds), but device first/last-seen timestamps were still datetime.now() — a 2026 device against 2017-2018 transactions, so Device Trust's device_age came out about -8 years. Separately, SQLite returns naive datetimes on reload while agents build aware-UTC values; mixing them raised can't subtract offset-naive and offset-aware datetimes, but only once a row had left the session's identity map — it passed in short tests and crashed in live-shaped flows. Rule Compliance and Device Trust had no dedicated tests, so neither was caught. 
+
+**Decision:** (1) get_or_create_device_and_link takes seen_at, passed from submitted_at by ingestion and by seed_db.py; first/last-seen use min/max so out-of-order rows can't corrupt them. (2) db/base.py maps every Mapped[datetime] to a UTCDateTime TypeDecorator that returns aware UTC on load and normalizes to UTC on write. (3) Dedicated tests for Rule Compliance, Device Trust, and the replay timeline. Rejected alternative: normalizing with .replace(tzinfo=...) inside each agent. Rejected because every future agent (Case Management, Network Intelligence) would have to remember it; the type fixes it once. Consequence: existing seeded DB files must be deleted and re-seeded.
+
 ---
 
 ## Open items (revisit as the project progresses)
 
 - Retraining trigger threshold (how many new `Feedback` labels before the Behavioral Analysis Agent retrains) — not yet finalized; to be set when the Behavioral Analysis / Case Management feedback loop is built.
 - Week-5 checkpoint (ADR-009): go/no-go on Investigator Assistant Agent, decided against actual progress at that point, not in advance.
+-Cold-start rule for Behavioral Analysis (abstain vs neutral below N prior transactions) — decide after scripts/prior_txn_buckets.py output; will be the next ADR.

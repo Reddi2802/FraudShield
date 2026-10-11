@@ -6,8 +6,9 @@ Companion to `DECISIONS.md` (the *why*) — this is the *what's left*. Check ite
 
 ## Week 1 — Ingestion Agent + API Gateway + DB models
 
-- [x] SQLAlchemy models — 13 entities from the Lab5 ERD (`db/base.py`, `db/models.py`, `db/session.py`)
-- [x] **Push `db/` files to the repo** — built but not yet committed as of this checklist
+- [x] SQLAlchemy models — 14 entities: the 13 from the Lab5 ERD plus `DeviceCustomerLink` (ADR-014) (`db/base.py`, `db/models.py`, `db/session.py`)
+- [x] **Push `db/` files to the repo**
+- [x] `agents/uid.py` — synthetic customer identity (ADR-011; amended in Week 3 to use D1n)
 - [x] `api/main.py` — FastAPI app entry point; calls `init_db()` at startup
 - [x] `api/routes/transactions.py` — `POST /transaction` endpoint accepting a raw transaction payload
 - [x] `agents/ingestion.py` — validates incoming data, enriches with account/device history
@@ -19,23 +20,35 @@ Companion to `DECISIONS.md` (the *why*) — this is the *what's left*. Check ite
 
 ## Week 2 — Rule Compliance + Device Trust
 
-- [ ] `agents/rule_compliance.py` — velocity, amount, geo threshold checks; writes `RuleViolation` rows
-- [ ] Concrete rule thresholds decided and written down (not left vague) — a config file or a section in `DECISIONS.md`
-- [ ] `agents/device_trust.py` — device reuse count, first-seen flag, device age scoring (ADR-002: rule-based, not ML)
-- [ ] Tests for both — rule triggers correctly, edge case of a transaction with no device
-- [ ] Commit
+- [x] `agents/rule_compliance.py` — velocity and amount checks; writes `RuleViolation` rows. The geo/billing rule was rejected as structurally unreachable, not deferred (ADR-015)
+- [ ] Concrete rule thresholds decided and written down (not left vague) — values exist only as constants in `rule_compliance.py`; still need a section in `DECISIONS.md` or a config file
+- [x] `agents/device_trust.py` — device reuse count, first-seen flag, device age scoring (ADR-002: rule-based, not ML)
+- [x] `agents/device_identity.py` — shared fingerprint + `DeviceCustomerLink` helper used by both ingestion and seeding (ADR-014)
+- [ ] Tests for both — files written (`test_rule_compliance.py`, `test_device_trust.py`, `test_device_timestamps.py`); tick once `uv run pytest` is green locally
+- [ ] Commit — Week 2 code is committed; the tests and the datetime fix (ADR-016) are not yet
 - [ ] QnA checkpoint: why Device Trust is statistical not ML, how thresholds were chosen
+
+## Week 3 prep — do before `ml/train_isolation_forest.py`
+
+- [x] UID normalized to D1n (ADR-011 amendment)
+- [x] `transaction_dt` accepted by the API + ingestion; `REFERENCE_START` is a single source of truth in `agents/uid.py`
+- [ ] Device timestamps from transaction time (`seen_at`) + `UTCDateTime` ORM type (ADR-016)
+- [ ] Delete `fraud_detection.db`, re-seed, run `uv run python -m scripts.check_seed` — must print 0 bad devices
+- [ ] Run `uv run python -m scripts.prior_txn_buckets` and record the table (decides whether an abstain-below-3-priors rule leaves Behavioral Analysis anything to catch)
+- [ ] Cold-start rule decided (abstain vs neutral below N prior transactions) and written up as ADR-017
+- [ ] ADR-013 and ADR-014 amendments added (append, don't overwrite)
+- [ ] Behavioral Analysis feature list written down, limited to what exists at serving time: the `Transaction` row plus Rule Compliance / Device Trust outputs (`D` and `V` columns are not in the payload or the DB)
 
 ## Week 3 — Behavioral Analysis
 
-- [ ] `ml/train_isolation_forest.py` — per-customer Isolation Forest training
+- [ ] `ml/train_isolation_forest.py` — one global Isolation Forest over per-UID, time-gated features (ADR-012). Per-customer forests rejected: 8–150 transactions per UID is too few to isolate anything, and `ModelVersion.artifact_path` assumes one model per version
 - [ ] First trained artifact saved to `ml/artifacts/` (gitignored)
 - [ ] First `ModelVersion` row inserted — `trained_at`, `hyperparameters`, `metrics`, `artifact_path` all populated for real
-- [ ] `agents/behavioral_analysis.py` — loads the model, scores incoming transactions
-- [ ] Evaluation against held-out labeled IEEE-CIS data — precision/recall/F1/false-positive rate, recorded in `ModelVersion.metrics`
-- [ ] Tests: score always in valid 0–1 range, handles missing features without crashing
+- [ ] `agents/behavioral_analysis.py` — loads the model, scores incoming transactions, follows the cold-start ADR for thin-history UIDs
+- [ ] Evaluation against held-out labeled IEEE-CIS data — PR-AUC plus precision/recall/F1/false-positive rate at a threshold chosen on validation (not test); UID-based split plus a time-based holdout; coverage (share of transactions scorable) reported alongside; all recorded in `ModelVersion.metrics`
+- [ ] Tests: score always in valid 0–1 range (or abstains per the cold-start ADR), handles missing features without crashing
 - [ ] Commit
-- [ ] **Deepest QnA session of the build** — Isolation Forest intuition, per-customer vs. global model choice, what each metric means and why false-positive rate matters specifically for fraud
+- [ ] **Deepest QnA session of the build** — Isolation Forest intuition, why a global model over per-UID features beat per-customer forests, what each metric means and why false-positive rate matters specifically for fraud
 
 ## Week 4 — Risk Synthesis + orchestrator wiring
 
@@ -89,3 +102,9 @@ Companion to `DECISIONS.md` (the *why*) — this is the *what's left*. Check ite
 ## Week 9 (buffer, not covered above)
 
 Absorbs holiday/lab disruption. If Investigator Assistant was greenlit at the week-5 checkpoint and isn't done yet, it lands here.
+
+---
+
+## Housekeeping (not blocking)
+
+- [ ] StarUML ERD still shows 13 entities; the schema has 14 (`DeviceCustomerLink`) — update before the next diagram-based submission

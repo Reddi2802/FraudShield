@@ -90,7 +90,8 @@ db/                # SQLAlchemy models + session/engine, schema follows the Lab5
 ml/                # training scripts (Isolation Forest, XGBoost), evaluation
   artifacts/       # gitignored — trained model files, not committed
 dashboard/         # Streamlit app — not yet built
-scripts/           # seed_db.py, run_network_batch.py, etc. — not yet built
+scripts/           # seed_db.py, check_seed.py, prior_txn_buckets.py;                   
+                   # run_network_batch.py
 tests/             # pytest, mirrors agents/ and api/
   test_agents/
   test_api/
@@ -135,6 +136,13 @@ Run tests:
 ```bash
 uv run pytest
 ```
+
+Seed the demo DB (delete fraud_detection.db first if re-seeding):
+```bash
+uv run python -m scripts.seed_db
+uv run python -m scripts.check_seed
+```
+output must show 0 bad devices.
 
 ## Roadmap
 
