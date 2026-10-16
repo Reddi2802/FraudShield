@@ -1,18 +1,17 @@
 """
 Pydantic models for the API layer.
 
-TransactionResponse deliberately has NO `decision` / `risk_score` field.
-Risk Synthesis doesn't exist until week 4 — adding a stub field now
-(null, "pending", whatever) means changing the response contract twice:
-once now to fake it, once in week 4 to populate it for real. Clients
-built against this week-1 contract won't need to change when the field
-is added later; they simply weren't relying on something that didn't
-exist yet.
+TransactionResponse gained `decision`, `risk_score` and `explanation` in
+Week 4, once Risk Synthesis existed — populated for real from the
+pipeline's RiskAssessment, never stubbed earlier (a placeholder field would
+have changed the response contract twice). The fields are additive, so a
+client built against the Week 1 contract keeps working.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -64,5 +63,9 @@ class TransactionResponse(BaseModel):
     amount: float
     currency: str
     submitted_at: datetime
+    # Week 4: from the Risk Synthesis Agent (RiskAssessment row).
+    decision: Literal["allow", "flag", "block"]
+    risk_score: float
+    explanation: str
 
     model_config = {"from_attributes": True}

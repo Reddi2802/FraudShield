@@ -3,7 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from agents.ingestion import IngestionError, process_transaction
+from agents.ingestion import IngestionError
+from agents.orchestrator import run_pipeline
 from api.schemas import TransactionRequest, TransactionResponse
 from db.session import get_session
 
@@ -16,7 +17,7 @@ def submit_transaction(
     session: Session = Depends(get_session),
 ) -> TransactionResponse:
     try:
-        transaction = process_transaction(
+        result = run_pipeline(
             session,
             card1=payload.card1,
             addr1=payload.addr1,
@@ -38,6 +39,8 @@ def submit_transaction(
         session.rollback()
         raise
 
+    transaction = result["transaction"]
+    assessment = result["assessment"]
     customer = transaction.account.customer
 
     return TransactionResponse(
@@ -50,4 +53,7 @@ def submit_transaction(
         amount=transaction.amount,
         currency=transaction.currency,
         submitted_at=transaction.submitted_at,
+        decision=assessment.decision.value,
+        risk_score=assessment.risk_score,
+        explanation=assessment.explanation_text,
     )
