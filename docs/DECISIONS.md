@@ -69,7 +69,7 @@ This log records why this system is built the way it is. The original SE lab sub
 UID = card1+addr1+D1, chosen for consensus and simplicity; revisit at week 3 if per-UID transaction-count distribution shows pathological fragmentation or collision.
 Observed at seed time: high-count UID collisions are concentrated in rows with missing addr1 and D1=0 — e.g. one UID matched 7,198 rows under this pattern. Confirms the predicted collision risk; the [8,150] seeding range (see scripts/seed_db.py) was chosen specifically to exclude these.
 
-Amendment (Week 3): raw D1 is a tenure counter that advances daily, so the same card produced a different UID on different days. UID is now card1 + addr1 + D1n, D1n = floor(TransactionDT/86400 - D1). Real-data check: single-transaction UIDs fell from 73.3% to 57.4%; worst collision outlier from 7,198 to 1,414 rows. agents/uid.py owns REFERENCE_START (single source of truth for the TransactionDT epoch).
+**Amendment (Week 3):** Raw `D1` is a tenure counter — it advances by one for every day that passes — so using it directly gave the same card a different UID on different days and fragmented single customers. UID is now `card1 + addr1 + D1n`, where `D1n = floor(TransactionDT/86400 - D1)`, a stable per-card anchor. Real-data check before switching: single-transaction UIDs fell from 73.3% to 57.4% and the largest collision outlier from 7,198 to 1,414 rows. `agents/uid.py` owns `REFERENCE_START`, the single source of truth for the TransactionDT epoch, and callers must supply the transaction's day offset (`transaction_dt` in the API). Residual collisions remain (the largest UID still spans 1,414 rows), so the [8,150] seeding window (ADR-013) stays.
 
 ## ADR-012 — Per-UID features must be time-gated, not full-history
 
@@ -91,7 +91,7 @@ Amendment (Week 3): raw D1 is a tenure counter that advances daily, so the same 
 
 **Why this isn't a training-data change:** Both bounds are seeding/demo-data policy only. `ml/train_isolation_forest.py` (week 3) trains directly against the unfiltered raw CSV, per ADR-012.
 
-Amendment (Week 3, after the D1n fix): the [8,150] pool grew from 6,739 to 14,493 candidate UIDs; the top collision outlier shrank from 7,198 to 1,414 rows. Bounds unchanged. The 1,500 seeded customers now carry 21,832 transactions. The "median=1 / 246,418 UIDs" figures above describe the pre-fix raw-D1 UID and are historical.
+**Amendment (Week 3, after the D1n fix — see ADR-011):** With D1n UIDs the loaded data has 217,850 distinct UIDs (median 1, mean 2.71, max 1,414), and the [8,150] pool grew from 6,739 to 14,504 UIDs. Bounds are unchanged. The 1,500 seeded customers carry 21,832 transactions (8–123 per customer, median 11). The figures above (246,418 UIDs, 7,198-row outlier) describe the pre-fix raw-D1 UID and are kept as the historical record. The seeded sample is deliberately history-rich: 79.4% of seeded transactions have at least 3 prior transactions, against 37.8% across the full dataset, so demo coverage overstates real-world coverage.
 
 ## ADR-014 — Device identity: many-to-many schema + device-intrinsic fingerprinting
 
@@ -103,7 +103,7 @@ Amendment (Week 3, after the D1n fix): the [8,150] pool grew from 6,739 to 14,49
 
 **Rejected alternative:** Including browser in the fallback fingerprint. Technically simpler, but browser-version churn across a single customer's own sessions is common and not a "new device" — doing this inflated the seeded device count to 5,175 before being caught via a sanity check (the count should drop under merging, not rise) and fixed.
 
-Amendment (Week 3): the seeded numbers above (3,253 devices, 158 linked to >1 customer) were measured under raw-D1 UIDs and a different sampled population. Re-seeded under D1n UIDs: 1,359 distinct devices, 112 linked to more than one customer. Not directly comparable — the customer population changed, not just the fingerprint logic. Device/DeviceCustomerLink first_seen_at/last_seen_at now come from the transaction's own timestamp (seen_at), not the wall clock (ADR-016). Only 17.5% of seeded transactions (3,831 of 21,832) carry a device, because most IEEE-CIS transactions have no identity row.
+**Amendment (Week 3):** The seeded figures above (3,253 devices, 158 linked to more than one customer) were measured under raw-D1 UIDs and a different sampled population, so they are not directly comparable. Re-seeded under D1n UIDs: 1,359 distinct devices, 112 linked to more than one customer, with a device present on only 17.5% of seeded transactions (3,831 of 21,832) because most IEEE-CIS transactions have no identity row. `Device` and `DeviceCustomerLink` first/last-seen timestamps now come from the transaction's own timestamp rather than the wall clock (ADR-016).
 
 ## ADR-015 — Billing/geo rule rejected (structural, not deferred)
 
@@ -115,9 +115,35 @@ Amendment (Week 3): the seeded numbers above (3,253 devices, 158 linked to >1 cu
 
 ## ADR-016 — Time is transaction-driven and always UTC-aware
 
-**Context:** Replaying IEEE-CIS rows through the API stamps submitted_at from the optional transaction_dt (REFERENCE_START + seconds), but device first/last-seen timestamps were still datetime.now() — a 2026 device against 2017-2018 transactions, so Device Trust's device_age came out about -8 years. Separately, SQLite returns naive datetimes on reload while agents build aware-UTC values; mixing them raised can't subtract offset-naive and offset-aware datetimes, but only once a row had left the session's identity map — it passed in short tests and crashed in live-shaped flows. Rule Compliance and Device Trust had no dedicated tests, so neither was caught. 
+**Context:** Replaying IEEE-CIS rows through the API stamps `submitted_at` from the optional `transaction_dt` (REFERENCE_START + seconds), but device first/last-seen timestamps were still `datetime.now()` — a 2026 device against 2017–2018 transactions, so Device Trust's `device_age` came out about −8 years. Separately, SQLite returns naive datetimes on reload while agents build aware-UTC values; mixing them raised `can't subtract offset-naive and offset-aware datetimes`, but only once a row had left the session's identity map — it passed short tests and would have crashed in a live-shaped flow. Rule Compliance and Device Trust had no dedicated tests, so neither was caught.
 
-**Decision:** (1) get_or_create_device_and_link takes seen_at, passed from submitted_at by ingestion and by seed_db.py; first/last-seen use min/max so out-of-order rows can't corrupt them. (2) db/base.py maps every Mapped[datetime] to a UTCDateTime TypeDecorator that returns aware UTC on load and normalizes to UTC on write. (3) Dedicated tests for Rule Compliance, Device Trust, and the replay timeline. Rejected alternative: normalizing with .replace(tzinfo=...) inside each agent. Rejected because every future agent (Case Management, Network Intelligence) would have to remember it; the type fixes it once. Consequence: existing seeded DB files must be deleted and re-seeded.
+**Decision:** (1) `get_or_create_device_and_link` takes `seen_at`, passed from `submitted_at` by ingestion and by `scripts/seed_db.py`; first/last-seen use min/max so out-of-order rows can't corrupt them. (2) `db/base.py` maps every `Mapped[datetime]` to a `UTCDateTime` TypeDecorator that returns aware UTC on load and normalizes to UTC on write. (3) Dedicated tests for Rule Compliance, Device Trust and the replay timeline.
+
+**Rejected alternative:** Normalizing with `.replace(tzinfo=...)` inside each agent. Every future agent (Case Management, Network Intelligence) would have to remember it; the type fixes it once.
+
+**Consequence:** Existing seeded DB files must be deleted and re-seeded. `scripts/check_seed.py` verifies no device is first-seen after its first transaction.
+
+## ADR-017 — Behavioral Analysis abstains below 3 prior transactions
+
+**Context:** With D1n UIDs, 57.4% of UIDs are single-transaction. Behavioral Analysis scores a transaction against the customer's own time-gated history (ADR-012); with no history there is nothing to compare against. Measured on the raw CSV: transactions with at least 3 prior UID transactions are 37.8% of traffic and 46.1% of all fraud. Fraud rate rises from 2.8% (0 priors) to 4.9% (8+ priors); part of that rise is probably UID collisions merging customers into one heavy "customer".
+
+**Decision:** Below 3 prior transactions the agent returns no score (abstains). Risk Synthesis fuses only the agents that produced a signal, and the explanation names the abstaining agent. Training and evaluation use only transactions with at least 3 priors, and metrics are reported together with coverage (the share of transactions scorable). The cutoff is `MIN_PRIOR_FOR_BEHAVIORAL` in `agents/history.py`; it matches Rule Compliance's own minimum history for the amount check.
+
+**Rejected alternatives:** (1) A neutral 0.5 for thin history — injects a fake opinion into more than half of all fusions. (2) A cutoff of 1 prior — raises coverage to about 63% of transactions and 71% of fraud, but scores customers on a single data point.
+
+**Consequence:** Rule Compliance and Device Trust carry the remaining ~54% of fraud. Revisit the cutoff if the Week 3 evaluation shows usable signal at 1–2 priors.
+
+## ADR-018 — Fusion by weighted noisy-OR; sequential graph for DB-bound nodes
+
+**Context:** Week 4 must turn heterogeneous signals into one score and a decision, and most transactions are missing some signal: no device info on ~82% of seeded transactions, and Behavioral Analysis abstains on thin history (ADR-017).
+
+**Decision:** `risk = 1 − PRODUCT(1 − weight × score)` over agents that produced a signal; abstainers are skipped. Rule severity scores: low 0.2, medium 0.4, high 0.6. Device: shared by N customers = 0.30 + 0.15 per extra customer (cap 0.75); new device for a customer who already has history = 0.15. Weights: rules 1.0, device 0.8. Thresholds: allow < 0.35, flag 0.35–0.70, block ≥ 0.70. The LangGraph graph is sequential: ingestion → rule_compliance → device_trust → risk_synthesis.
+
+**Rejected alternatives:** (1) A weighted average — a clean device would dilute a rule hit, and abstentions would need renormalizing. (2) A parallel fan-out of Rule Compliance and Device Trust — verified that LangGraph runs fan-out branches in worker threads, and both nodes share one SQLAlchemy Session, which is not thread-safe.
+
+**Evidence (real data):** `scripts/replay_eval.py` replayed the 1,500 seeded customers (21,832 transactions, 968 fraud, 4.43% base rate) through Rule Compliance + Device Trust + Risk Synthesis. Flag+block covered 4.7% of transactions with recall 4.4% and precision 4.2% — no lift over the base rate. This is expected for hard-limit rules (velocity, amount, shared device), which are compliance checks rather than fraud rankers; ranking is delegated to Behavioral Analysis.
+
+**Consequence:** Every number above is a starting point, not a tuned value. Behavioral Analysis and Network Intelligence plug in as extra `Signal`s with no change to the fusion.
 
 ---
 
@@ -125,4 +151,5 @@ Amendment (Week 3): the seeded numbers above (3,253 devices, 158 linked to >1 cu
 
 - Retraining trigger threshold (how many new `Feedback` labels before the Behavioral Analysis Agent retrains) — not yet finalized; to be set when the Behavioral Analysis / Case Management feedback loop is built.
 - Week-5 checkpoint (ADR-009): go/no-go on Investigator Assistant Agent, decided against actual progress at that point, not in advance.
--Cold-start rule for Behavioral Analysis (abstain vs neutral below N prior transactions) — decide after scripts/prior_txn_buckets.py output; will be the next ADR.
+- Behavioral Analysis model and feature set — `scripts/feature_signal.py` measured a gradient-boosted model at 4.1x PR-AUC lift (ROC-AUC 0.795) on features available at serving today, versus 14.1x (ROC-AUC 0.880) with the extra C/D/dist1/card4 columns. Which model to build and whether to expand the API payload are decided in the next ADR, not here.
+- Rule Compliance thresholds (velocity above 5 transactions per hour, amount above 3x own mean, global p99 fallback) are constants in code with no recorded rationale. `feature_signal` shows repeat-within-1h at 1.91x lift and amount-spike at 1.37x lift on the full data; record the chosen thresholds and their evidence here.
