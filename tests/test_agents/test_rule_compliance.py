@@ -103,3 +103,32 @@ def test_run_rule_compliance_clean_transaction_writes_nothing(db_session):
     result = run_rule_compliance(db_session, t)
     assert not result.flagged
     assert db_session.query(RuleViolation).count() == 0
+
+
+# ---- global p99 cache (perf fix found via scripts/replay_eval.py) ----
+
+def test_global_p99_is_exact_for_small_tables(db_session):
+    from agents.rule_compliance import compute_global_amount_p99
+
+    for i in range(5):
+        _ingest(db_session, 10 * 86400 + i * 7200, 10.0)
+    before = compute_global_amount_p99(db_session)
+    _ingest(db_session, 10 * 86400 + 5 * 7200, 5000.0)
+    after = compute_global_amount_p99(db_session)
+    assert after > before  # below P99_EXACT_BELOW rows it is recomputed every call
+
+
+def test_global_p99_is_cached_once_the_table_is_large(db_session, monkeypatch):
+    import agents.rule_compliance as rc
+
+    monkeypatch.setattr(rc, "P99_EXACT_BELOW", 0)  # treat any table as "large"
+    calls = []
+    real = rc._compute_p99_exact
+    monkeypatch.setattr(rc, "_compute_p99_exact", lambda s: calls.append(1) or real(s))
+
+    for i in range(4):
+        _ingest(db_session, 10 * 86400 + i * 7200, 10.0)
+    rc.compute_global_amount_p99(db_session)
+    rc.compute_global_amount_p99(db_session)
+    rc.compute_global_amount_p99(db_session)
+    assert len(calls) == 1  # computed once, then served from session.info

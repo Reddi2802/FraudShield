@@ -187,11 +187,15 @@ class Transaction(Base):
     __tablename__ = "transactions"
 
     transaction_id: Mapped[int] = mapped_column(primary_key=True)
-    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.account_id"))
+    # index=True on account_id/device_id: Rule Compliance, Device Trust and the
+    # history helper all filter Transaction by these on every request; SQLite
+    # does not index foreign keys automatically, so each lookup was a full scan
+    # that got slower as the table grew (visible in scripts/replay_eval.py).
+    account_id: Mapped[int] = mapped_column(ForeignKey("accounts.account_id"), index=True)
     merchant_id: Mapped[int] = mapped_column(ForeignKey("merchants.merchant_id"))
     # Nullable: not every transaction has an identifiable device (e.g. card-present).
     device_id: Mapped[int | None] = mapped_column(
-        ForeignKey("devices.device_id"), nullable=True
+        ForeignKey("devices.device_id"), nullable=True, index=True
     )
     amount: Mapped[float]
     currency: Mapped[str] = mapped_column(String(3), default="USD")

@@ -36,6 +36,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from db.models import RuleViolation, Transaction
@@ -146,20 +147,44 @@ def _get_prior_transactions(session: Session, transaction: Transaction) -> list[
     )
 
 
-def compute_global_amount_p99(session: Session) -> Optional[float]:
-    """
-    Global 99th percentile of Transaction.amount, recomputed on every call.
-    Fine at Week 2 / ~22K-row seeded-DB scale (21,832 transactions). Revisit caching (compute
-    once at startup, or in scripts/seed_db.py and store somewhere) before
-    Week 7's dashboard puts this on a hot path.
-    """
+# Recomputing the p99 loads and sorts EVERY amount, and the pipeline calls it
+# once per transaction — quadratic over a replay (scripts/replay_eval.py spent
+# most of its ~40 minutes here). So it is cached per Session (session.info, so
+# no state leaks between sessions or tests) and refreshed when the table has
+# grown by P99_REFRESH_GROWTH. Below P99_EXACT_BELOW rows it is always exact.
+# A p99 that is up to ~2% stale is immaterial: it is a fallback threshold for
+# thin-history customers, not a tuned value.
+P99_EXACT_BELOW = 1000
+P99_REFRESH_GROWTH = 1.02
+_P99_CACHE_KEY = "rule_compliance_global_p99"
+
+
+def _compute_p99_exact(session: Session) -> tuple[int, Optional[float]]:
     amounts = [row[0] for row in session.query(Transaction.amount).all()]
     if len(amounts) < 2:
-        return None
+        return len(amounts), None
     try:
-        return statistics.quantiles(amounts, n=100)[98]
+        return len(amounts), statistics.quantiles(amounts, n=100)[98]
     except statistics.StatisticsError:
-        return max(amounts)
+        return len(amounts), max(amounts)
+
+
+def compute_global_amount_p99(session: Session) -> Optional[float]:
+    """
+    Global 99th percentile of Transaction.amount, cached per session (see the
+    note above). Exact for small tables; at most ~2% stale for large ones.
+    """
+    n_rows = session.query(func.count(Transaction.transaction_id)).scalar() or 0
+    cached = session.info.get(_P99_CACHE_KEY)
+    if (
+        cached is not None
+        and n_rows >= P99_EXACT_BELOW
+        and n_rows < cached[0] * P99_REFRESH_GROWTH
+    ):
+        return cached[1]
+    n_at_compute, value = _compute_p99_exact(session)
+    session.info[_P99_CACHE_KEY] = (n_at_compute, value)
+    return value
 
 
 def run_rule_compliance(session: Session, transaction: Transaction) -> RuleComplianceResult:
