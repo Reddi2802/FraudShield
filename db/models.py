@@ -224,7 +224,7 @@ class ModelVersion(Base):
     __tablename__ = "model_versions"
 
     model_version_id: Mapped[int] = mapped_column(primary_key=True)
-    model_type: Mapped[str] = mapped_column(String(100))  # e.g. "isolation_forest_behavioral"
+    model_type: Mapped[str] = mapped_column(String(100))  # e.g. "xgboost_behavioral" (ADR-019)
     trained_at: Mapped[datetime] = mapped_column(default=_now_utc)
     hyperparameters: Mapped[dict] = mapped_column(JSON, default=dict)
     metrics: Mapped[dict] = mapped_column(JSON, default=dict)  # precision/recall/F1/FPR at training time

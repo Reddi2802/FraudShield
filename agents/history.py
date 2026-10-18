@@ -2,13 +2,14 @@
 Per-customer history helpers, shared by the orchestrator, Risk Synthesis and
 (Week 3) Behavioral Analysis.
 
-MIN_PRIOR_FOR_BEHAVIORAL encodes the cold-start rule (ADR-017): Behavioral
-Analysis abstains — returns no score — for a customer with fewer than this
-many earlier transactions. Measured on the raw IEEE-CIS CSV (D1n UIDs),
-transactions with >= 3 prior UID transactions are 37.8% of traffic and
-46.1% of all fraud, so the rule leaves the agent roughly half the fraud to
-look at while never scoring a customer on one or two data points. The value
-also matches Rule Compliance's AMOUNT_MIN_HISTORY_FOR_MULTIPLIER.
+MIN_PRIOR_FOR_BEHAVIORAL is the minimum number of earlier transactions before
+the per-customer z-score feature (amt_z) is computed. ADR-017 first used it
+as an ABSTAIN cutoff for Behavioral Analysis; ADR-019 supersedes that: the
+supervised model scores every transaction and simply sees amt_z as missing
+below this many priors. Measured on the raw IEEE-CIS CSV (D1n UIDs),
+transactions with >= 3 prior UID transactions are 37.8% of traffic and 46.1%
+of all fraud. The value matches Rule Compliance's own
+AMOUNT_MIN_HISTORY_FOR_MULTIPLIER.
 """
 
 from __future__ import annotations
