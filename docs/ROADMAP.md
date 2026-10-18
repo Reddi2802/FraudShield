@@ -24,45 +24,47 @@ Companion to `DECISIONS.md` (the *why*) — this is the *what's left*. Check ite
 - [ ] Concrete rule thresholds decided and written down (not left vague) — values exist only as constants in `rule_compliance.py`; still need a section in `DECISIONS.md` or a config file
 - [x] `agents/device_trust.py` — device reuse count, first-seen flag, device age scoring (ADR-002: rule-based, not ML)
 - [x] `agents/device_identity.py` — shared fingerprint + `DeviceCustomerLink` helper used by both ingestion and seeding (ADR-014)
-- [ ] Tests for both — files written (`test_rule_compliance.py`, `test_device_trust.py`, `test_device_timestamps.py`); tick once `uv run pytest` is green locally
-- [ ] Commit — Week 2 code is committed; the tests and the datetime fix (ADR-016) are not yet
+- [x] Tests for both — files written (`test_rule_compliance.py`, `test_device_trust.py`, `test_device_timestamps.py`); tick once `uv run pytest` is green locally
+- [x] Commit — Week 2 code is committed; the tests and the datetime fix (ADR-016) are not yet
 - [ ] QnA checkpoint: why Device Trust is statistical not ML, how thresholds were chosen
 
-## Week 3 prep — do before `ml/train_isolation_forest.py`
+## Week 3 prep — do before `ml/train_behavioral.py`
 
 - [x] UID normalized to D1n (ADR-011 amendment)
 - [x] `transaction_dt` accepted by the API + ingestion; `REFERENCE_START` is a single source of truth in `agents/uid.py`
 - [x] Device timestamps from transaction time (`seen_at`) + `UTCDateTime` ORM type (ADR-016)
 - [x] Delete `fraud_detection.db`, re-seed, run `uv run python -m scripts.check_seed` — must print 0 bad devices
 - [x] Run `uv run python -m scripts.prior_txn_buckets` and record the table — result: >=3 priors = 37.8% of transactions, 46.1% of fraud
-- [ ] Cold-start rule decided (abstain below 3 prior transactions) — decision made; write it up as ADR-017 (text in `DOC_EDITS_2.md`)
-- [ ] ADR-013 and ADR-014 amendments added (append, don't overwrite)
-- [ ] Behavioral Analysis feature list written down, limited to what exists at serving time: the `Transaction` row plus Rule Compliance / Device Trust outputs (`D` and `V` columns are not in the payload or the DB)
+- [x] Cold-start rule decided (ADR-017) — superseded by ADR-019 (the model scores every transaction)
+- [x] ADR-013 and ADR-014 amendments added (append, don't overwrite)
+- [x] Behavioral Analysis feature list written down, limited to what exists at serving time: the `Transaction` row plus Rule Compliance / Device Trust outputs (`D` and `V` columns are not in the payload or the DB)
 
 ## Week 3 — Behavioral Analysis
 
-> **Order change (agreed):** the Week 4 orchestrator + Risk Synthesis are built *before* this agent so a working end-to-end demo exists early. Behavioral Analysis then lands as a new node and one extra `Signal` into Risk Synthesis (ADR-018). Staged model plan: global Isolation Forest first (time-boxed ~2 days); add a supervised XGBoost on the same features only if PR-AUC on the scorable slice is under ~2x its base rate (~4.3%).
+> **Order change (agreed):** the orchestrator + Risk Synthesis were built first; Behavioral Analysis landed as a new node and one extra `Signal` (ADR-018, ADR-019). Model = supervised XGBoost, not an Isolation Forest (ADR-019).
 
-- [ ] `ml/train_isolation_forest.py` — one global Isolation Forest over per-UID, time-gated features (ADR-012). Per-customer forests rejected: 8–150 transactions per UID is too few to isolate anything, and `ModelVersion.artifact_path` assumes one model per version
-- [ ] First trained artifact saved to `ml/artifacts/` (gitignored)
-- [ ] First `ModelVersion` row inserted — `trained_at`, `hyperparameters`, `metrics`, `artifact_path` all populated for real
-- [ ] `agents/behavioral_analysis.py` — loads the model, scores incoming transactions, follows the cold-start ADR for thin-history UIDs
-- [ ] Evaluation against held-out labeled IEEE-CIS data — PR-AUC plus precision/recall/F1/false-positive rate at a threshold chosen on validation (not test); UID-based split plus a time-based holdout; coverage (share of transactions scorable) reported alongside; all recorded in `ModelVersion.metrics`
-- [ ] Tests: score always in valid 0–1 range (or abstains per the cold-start ADR), handles missing features without crashing
-- [ ] Commit
-- [ ] **Deepest QnA session of the build** — Isolation Forest intuition, why a global model over per-UID features beat per-customer forests, what each metric means and why false-positive rate matters specifically for fraud
+- [x] `agents/behavioral_features.py` — one feature builder shared by training and serving, time-gated, parity-tested (delivered; tick once `uv run pytest` is green)
+- [x] `ml/train_behavioral.py` — XGBoost, chronological split, calibration fitted on validation (delivered; tick once it has run locally)
+- [x] First trained artifact saved to `ml/artifacts/` (gitignored)
+- [x] First `ModelVersion` row inserted — `trained_at`, `hyperparameters`, `metrics`, `artifact_path` populated for real
+- [x] `agents/behavioral_analysis.py` — scores every transaction, names top drivers; abstains only when no model is registered; wired into the orchestrator
+- [x] Evaluation on the held-out test period — PR-AUC, precision/recall at the validation-chosen flag and block thresholds, coverage; recorded in `ModelVersion.metrics`
+- [x] End-to-end check: `uv run python -m scripts.replay_eval` — record the HELD-OUT table in ADR-019
+- [x] Tests: features (hand-checked + train/serve parity), training helpers, agent (no model, missing artifact, no history), pipeline wiring
+- [x] Commit
+- [ ] **Deepest QnA session of the build** — why supervised over Isolation Forest, time-gating and train/serve parity, the rank-calibrated probability map, what PR-AUC and lift mean at a 3.5% base rate
 
 ## Week 4 — Risk Synthesis + orchestrator wiring
 
-- [ ] `agents/orchestrator.py` — LangGraph state graph: Ingestion → Rule Compliance → Device Trust → Risk Synthesis. Edges are sequential on purpose: nodes share one SQLAlchemy Session, which isn't thread-safe, and LangGraph runs fan-out branches in threads (ADR-018). Behavioral Analysis is added as a node after Week 3
-- [ ] `agents/history.py` — `count_prior_transactions` + `MIN_PRIOR_FOR_BEHAVIORAL = 3` (cold-start constant, ADR-017)
-- [ ] `agents/risk_synthesis.py` — weighted noisy-OR fusion; abstaining agents skipped and named in the explanation; thresholds allow <0.35 / flag / block >=0.70 (starting points, ADR-018)
-- [ ] Writes `RiskAssessment` rows (`model_version_id` stays NULL until a trained model contributes)
-- [ ] Wire `POST /transaction` to `run_pipeline` (replace the direct `process_transaction` call) and return decision, score and explanation
-- [ ] **First end-to-end demo** — submit a transaction through the API, get a real decision back
-- [ ] `scripts/replay_eval.py` — replay the seeded customers through the pipeline; record the rules+device-only baseline (recall/precision vs isFraud) before Behavioral Analysis exists
-- [ ] Integration tests: `test_risk_synthesis.py` + `test_orchestrator.py` (files delivered; tick once green locally)
-- [ ] Commit
+- [x] `agents/orchestrator.py` — LangGraph state graph: Ingestion → Rule Compliance → Device Trust → Behavioral Analysis → Risk Synthesis. Edges are sequential on purpose: nodes share one SQLAlchemy Session, which isn't thread-safe, and LangGraph runs fan-out branches in threads (ADR-018). Behavioral Analysis is added as a node after Week 3
+- [x] `agents/history.py` — `count_prior_transactions` + `MIN_PRIOR_FOR_BEHAVIORAL = 3` (z-score cutoff; was the abstain constant in ADR-017, ADR-019)
+- [x] `agents/risk_synthesis.py` — weighted noisy-OR fusion; abstaining agents skipped and named in the explanation; thresholds allow <0.35 / flag / block >=0.70 (starting points, ADR-018)
+- [x] Writes `RiskAssessment` rows (`model_version_id` is set from the Behavioral model once one is registered)
+- [x] Wire `POST /transaction` to `run_pipeline` (replace the direct `process_transaction` call) and return decision, score and explanation
+- [x] **First end-to-end demo** — submit a transaction through the API, get a real decision back
+- [x] `scripts/replay_eval.py` — replay the seeded customers through the pipeline; record the rules+device-only baseline (recall/precision vs isFraud) before Behavioral Analysis exists
+- [x] Integration tests: `test_risk_synthesis.py` + `test_orchestrator.py` (green)
+- [x] Commit
 - [ ] QnA checkpoint: LangGraph state-passing mechanics, fusion formula reasoning, threshold choices
 
 ## Week 5 — Network Intelligence + checkpoint

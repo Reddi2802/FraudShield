@@ -25,8 +25,8 @@ POST /transaction
         │
         ├─► Ingestion Agent            (enrich with customer/account history)
         ├─► Rule Compliance Agent      (velocity, amount, geo limits)
-        ├─► Behavioral Analysis Agent  (per-customer Isolation Forest)
         ├─► Device Trust Agent         (device reuse / first-seen signals)
+        ├─► Behavioral Analysis Agent  (supervised XGBoost on time-gated history features)
         │
         ▼
   Risk Synthesis Agent  (fuses all signals → 0–1 score → allow/flag/block)
@@ -57,7 +57,7 @@ POST /transaction
 |---|---|---|
 | Ingestion | Deterministic | Validates, normalizes, enriches with account history |
 | Rule Compliance | Deterministic | Velocity/amount/geo hard limits |
-| Behavioral Analysis | ML (Isolation Forest) | Per-customer anomaly scoring |
+| Behavioral Analysis | ML (XGBoost, supervised) | Per-transaction fraud probability from time-gated customer-history features |
 | Device Trust | Statistical | Device reuse, first-seen, age signals |
 | Network Intelligence | Graph analytics, async | Shared-device/address graph → ring risk |
 | Risk Synthesis | Aggregator | Fuses all signals → unified decision |
@@ -70,7 +70,7 @@ All 8 agents above are core scope (see `docs/DECISIONS.md`, ADR-008). A ninth ag
 
 - **Orchestration:** LangGraph
 - **API:** FastAPI + Uvicorn, JWT auth via `python-jose` + `passlib` (real auth for Customer/Investigator roles; Admin is a simplified role flag — see ADR-010)
-- **ML:** scikit-learn (Isolation Forest), XGBoost, imbalanced-learn (SMOTE)
+- **ML:** XGBoost (class-weighted, chronological validation), scikit-learn for metrics
 - **Graph analytics:** networkx
 - **LLM:** Ollama, `llama3.1:8b-instruct` (local, quantized — no API cost, no data leaves the device)
 - **Database:** SQLite + SQLAlchemy
@@ -87,11 +87,11 @@ agents/           # 8 agent files + orchestrator.py (LangGraph wiring)
 api/               # FastAPI app, entry point, request/response models, JWT auth
   routes/          # route handlers (transaction submission, case endpoints, etc.)
 db/                # SQLAlchemy models + session/engine, schema follows the Lab5 ERD
-ml/                # training scripts (Isolation Forest, XGBoost), evaluation
+ml/                # train_behavioral.py (XGBoost), evaluation
   artifacts/       # gitignored — trained model files, not committed
 dashboard/         # Streamlit app — not yet built
-scripts/           # seed_db.py, check_seed.py, prior_txn_buckets.py;                   
-                   # run_network_batch.py
+scripts/           # seed_db.py, check_seed.py, prior_txn_buckets.py, feature_signal.py,
+                   # replay_eval.py; run_network_batch.py (week 5, not yet built)
 tests/             # pytest, mirrors agents/ and api/
   test_agents/
   test_api/
@@ -144,14 +144,25 @@ uv run python -m scripts.check_seed
 ```
 output must show 0 bad devices.
 
+Train the Behavioral Analysis model (writes `ml/artifacts/`, registers a `ModelVersion` row in the DB):
+```bash
+uv run python -m ml.train_behavioral
+```
+After deleting and re-seeding the DB, run it again with `--register-only` to re-register the saved model without retraining.
+
+End-to-end evaluation (replays the seeded customers through the full pipeline against the real fraud labels; reports the held-out period separately):
+```bash
+uv run python -m scripts.replay_eval
+```
+
 ## Roadmap
 
 All 8 agents are core scope (ADR-008). Build order is sequenced by dependency and complexity, not by an artificial core/extension split:
 
 - **Week 1:** Ingestion Agent + API Gateway + DB models — foundation everything else builds on.
 - **Week 2:** Rule Compliance Agent + Device Trust Agent (both deterministic/statistical, no ML training loop).
-- **Week 3:** Behavioral Analysis Agent (Isolation Forest) — deepest ML component.
-- **Week 4:** Risk Synthesis Agent + orchestrator wiring — first end-to-end demo (Ingestion → Rules → Behavioral → Device → decision).
+- **Week 3:** Behavioral Analysis Agent (supervised XGBoost, ADR-019) — deepest ML component.
+- **Week 4:** Risk Synthesis Agent + orchestrator wiring — first end-to-end demo (Ingestion → Rules → Device → Behavioral → decision).
 - **Week 5 — checkpoint:** Network Intelligence Agent (graph metrics, async APScheduler job). Go/no-go decision on Investigator Assistant Agent made here against actual progress (ADR-009).
 - **Week 6:** Explanation Agent (sync template + async local LLM) + Case Management Agent.
 - **Week 7:** Streamlit dashboard, Customer/Investigator JWT auth, Admin role flag, integration testing.

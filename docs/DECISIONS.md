@@ -81,6 +81,8 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 **Consequence:** Feature computation needs a time-ordered expanding aggregation per UID, not a single groupby. This matches how a real production system actually works — it never has a customer's future transactions when scoring a live one.
 
+**Amendment (Week 3):** the train/validation split for Behavioral Analysis is chronological (train on the earliest 55% of TransactionDT, validate on the next 15%, test on the last 30%) instead of by UID. Time-gated per-UID features already prevent leakage within a UID; a time split additionally tests drift across the dataset window and is the stricter of the two (ADR-019).
+
 ## ADR-013 — Seed data sampled from UIDs with 8–150 transactions, not the full population
 
 **Context:** Uniform sampling over all 246,418 UIDs mostly picks thin-history customers (median=1 transaction) — no baseline for Behavioral Analysis (week 3) to learn from. The same distribution's high end is worse: the top UID matched 7,198 rows, concentrated around missing `addr1` + `D1=0` — a card1+addr1+D1 collision merging many different transactions into one UID, not one very active customer.
@@ -89,7 +91,7 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 **Rejected alternative:** Uniform sampling (original implementation). Rejected because it's exposed to both problems at once — mostly thin customers, with no protection against collision outliers either.
 
-**Why this isn't a training-data change:** Both bounds are seeding/demo-data policy only. `ml/train_isolation_forest.py` (week 3) trains directly against the unfiltered raw CSV, per ADR-012.
+**Why this isn't a training-data change:** Both bounds are seeding/demo-data policy only. `ml/train_behavioral.py` (week 3, ADR-019) trains directly against the unfiltered raw CSV, per ADR-012.
 
 **Amendment (Week 3, after the D1n fix — see ADR-011):** With D1n UIDs the loaded data has 217,850 distinct UIDs (median 1, mean 2.71, max 1,414), and the [8,150] pool grew from 6,739 to 14,504 UIDs. Bounds are unchanged. The 1,500 seeded customers carry 21,832 transactions (8–123 per customer, median 11). The figures above (246,418 UIDs, 7,198-row outlier) describe the pre-fix raw-D1 UID and are kept as the historical record. The seeded sample is deliberately history-rich: 79.4% of seeded transactions have at least 3 prior transactions, against 37.8% across the full dataset, so demo coverage overstates real-world coverage.
 
@@ -125,6 +127,8 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 ## ADR-017 — Behavioral Analysis abstains below 3 prior transactions
 
+**Status:** Superseded by ADR-019 — the supervised model scores every transaction, so the abstention rule is dropped. Kept as the historical record and for the bucket-table evidence.
+
 **Context:** With D1n UIDs, 57.4% of UIDs are single-transaction. Behavioral Analysis scores a transaction against the customer's own time-gated history (ADR-012); with no history there is nothing to compare against. Measured on the raw CSV: transactions with at least 3 prior UID transactions are 37.8% of traffic and 46.1% of all fraud. Fraud rate rises from 2.8% (0 priors) to 4.9% (8+ priors); part of that rise is probably UID collisions merging customers into one heavy "customer".
 
 **Decision:** Below 3 prior transactions the agent returns no score (abstains). Risk Synthesis fuses only the agents that produced a signal, and the explanation names the abstaining agent. Training and evaluation use only transactions with at least 3 priors, and metrics are reported together with coverage (the share of transactions scorable). The cutoff is `MIN_PRIOR_FOR_BEHAVIORAL` in `agents/history.py`; it matches Rule Compliance's own minimum history for the amount check.
@@ -145,11 +149,24 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 **Consequence:** Every number above is a starting point, not a tuned value. Behavioral Analysis and Network Intelligence plug in as extra `Signal`s with no change to the fusion.
 
+## ADR-019 — Behavioral Analysis is a supervised XGBoost model that scores every transaction
+
+**Context:** The roadmap planned an Isolation Forest (first per-customer, then global). Two measurements changed that. `scripts/replay_eval.py` showed Rule Compliance + Device Trust alone have no lift (flag+block precision 4.2% against a 4.43% base rate). `scripts/feature_signal.py` showed a gradient-boosted model on features available at serving reaches 4.1x PR-AUC lift (ROC-AUC 0.795) on all transactions and 3.6x on the slice with at least 3 prior transactions, versus 14.1x with extra C/D columns. Much of the signal is not history-based (ProductCD C 3.34x lift, W 0.58x; hour of day; amount), which an unsupervised anomaly detector cannot exploit and which exists for transactions with no history.
+
+**Decision:** Behavioral Analysis is one XGBoost classifier (`scale_pos_weight`, no SMOTE) over eight features computed by one shared function for training and serving (`agents/behavioral_features.py`): amount, product_cd, card6, hour, prior_count, amt_ratio, amt_z, secs_since_last. All history features are time-gated (ADR-012). It scores every transaction; history features are simply missing below 3 prior transactions, which XGBoost handles natively, so ADR-017's abstention is superseded (the agent abstains only when no model is registered). The split is chronological (ADR-012 amendment). The probability is mapped to a 0-1 risk signal by a piecewise-linear map fitted on validation data only (median -> 0, 95th percentile -> flag threshold 0.35, 99th -> block threshold 0.70, 99.9th -> 1.0), so roughly the top 5% flag and the top 1% block on validation. Per-prediction feature contributions name the top drivers in the explanation.
+
+**Rejected alternatives:** (1) Isolation Forest — unsupervised, ignores the labels, never measured on this data; stays a stretch item. (2) Per-customer models — 8-150 transactions per UID is too few. (3) Expanded C/D features — 14x versus 4x lift, but needs an API payload and storage change; deferred as a stretch item. (4) SMOTE — synthetic rows would break time-gating.
+
+**Consequence:** Results are modest but real (about 4x lift expected). The probability is rank-calibrated, not probabilistically calibrated. Training and serving share one code path, checked by a parity test. The honest end-to-end number is the HELD-OUT table printed by `scripts/replay_eval.py`. After deleting and re-seeding the DB, run `uv run python -m ml.train_behavioral --register-only` to re-register the model (the artifact lives in gitignored `ml/artifacts/`).
+
+**Results (first run on the full CSV, chronological split):** test period 177,162 rows (3.46% fraud): PR-AUC 0.140 (4.0x lift), ROC-AUC 0.789, coverage 100%. At the validation-chosen thresholds, flag covers 3.9% of transactions (precision 19.1%, recall 21.7%) and block 0.7% (precision 27.2%, recall 5.5%). End-to-end `replay_eval` on the 1,500 seeded customers, held-out period only (6,565 transactions, 278 fraud, 4.23% base rate): fraud rate allow 3.56%, flag 8.35%, block 20.2%; flag+block cover 10.4% of transactions with precision 10.1% (2.4x) and recall 24.8%; fused PR-AUC 0.104 (2.5x). The Rules + Device baseline had no lift (4.2% vs 4.43%). The held-out sample is small (278 fraud), so its lift carries wide uncertainty.
+
 ---
 
 ## Open items (revisit as the project progresses)
 
 - Retraining trigger threshold (how many new `Feedback` labels before the Behavioral Analysis Agent retrains) — not yet finalized; to be set when the Behavioral Analysis / Case Management feedback loop is built.
 - Week-5 checkpoint (ADR-009): go/no-go on Investigator Assistant Agent, decided against actual progress at that point, not in advance.
-- Behavioral Analysis model and feature set — `scripts/feature_signal.py` measured a gradient-boosted model at 4.1x PR-AUC lift (ROC-AUC 0.795) on features available at serving today, versus 14.1x (ROC-AUC 0.880) with the extra C/D/dist1/card4 columns. Which model to build and whether to expand the API payload are decided in the next ADR, not here.
 - Rule Compliance thresholds (velocity above 5 transactions per hour, amount above 3x own mean, global p99 fallback) are constants in code with no recorded rationale. `feature_signal` shows repeat-within-1h at 1.91x lift and amount-spike at 1.37x lift on the full data; record the chosen thresholds and their evidence here.
+- Expanded feature set (C/D/dist1/card4 columns, ~14x lift in `feature_signal`) is a stretch item, decided only after the core pipeline is complete (needs an API payload and storage change plus a new ADR).
+- Label delay: investigators confirm fraud with a lag, so a production retraining loop would leave a gap between the training window and the evaluation window. The current chronological split has no gap; note this as a known limitation.
