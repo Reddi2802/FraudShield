@@ -20,13 +20,17 @@ Compliance + Device Trust alone catch before Behavioral Analysis exists.
   rows it trained on. The script therefore reports twice: all rows, and the
   HELD-OUT test period only (TransactionDT after the model's test cutoff) —
   the held-out table is the honest number.
-- Expect roughly 10-15 minutes for ~22K transactions.
+- Saves every transaction's per-signal scores to data/processed/replay_results.csv
+  (gitignored) so alternative fusion weights can be tested in seconds with
+  `uv run python -m scripts.fusion_check` instead of another long replay.
+- Expect roughly 25-30 minutes for ~22K transactions.
 """
 
 from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 import pandas as pd
 from passlib.hash import bcrypt
@@ -38,6 +42,7 @@ from sqlalchemy.pool import StaticPool
 import agents.ingestion as ingestion
 import db.models  # noqa: F401  (registers all tables on Base.metadata)
 from agents.orchestrator import run_pipeline
+from agents.risk_synthesis import device_signal, rule_signal
 from db.base import Base
 from ml.train_behavioral import latest_meta_path, register_model_version
 from scripts.seed_db import (
@@ -49,6 +54,8 @@ from scripts.seed_db import (
     load_source_data,
     sample_customers,
 )
+
+RESULTS_CSV = Path("data/processed/replay_results.csv")
 
 # Replay creates ~1,500 placeholder customers; full-strength bcrypt per new
 # customer would dominate the runtime and adds nothing to this evaluation.
@@ -111,11 +118,19 @@ def main() -> None:
             "prior": out["prior_txn_count"],
             "dt": float(r.TransactionDT),
             "behavioral": not out["behavioral_result"].abstained,
+            # per-signal scores (NaN = that agent abstained) for scripts/fusion_check.py
+            "rule_score": rule_signal(out["rule_result"]).score,
+            "device_score": device_signal(out["device_result"], out["prior_txn_count"]).score,
+            "behavioral_score": out["behavioral_result"].risk_score,
+            "case_opened": out["case"] is not None,
         })
         if i % 2000 == 0:
             print(f"  ...{i:,}/{len(subset):,} replayed ({time.time() - started:.0f}s)")
 
     res = pd.DataFrame(rows)
+    RESULTS_CSV.parent.mkdir(parents=True, exist_ok=True)
+    res.to_csv(RESULTS_CSV, index=False)
+    print(f"\nSaved per-transaction results to {RESULTS_CSV} ({res['case_opened'].sum():,} cases opened).")
     report(res, "ALL replayed transactions (includes rows the model trained on)")
     if test_start_dt is not None:
         report(res[res["dt"] > test_start_dt], "HELD-OUT test period only (the honest number)")
