@@ -41,6 +41,7 @@ def submit_transaction(
 
     transaction = result["transaction"]
     assessment = result["assessment"]
+    case = result.get("case")
     customer = transaction.account.customer
 
     return TransactionResponse(
@@ -56,4 +57,5 @@ def submit_transaction(
         decision=assessment.decision.value,
         risk_score=assessment.risk_score,
         explanation=assessment.explanation_text,
+        case_id=case.fraud_case_id if case is not None else None,
     )

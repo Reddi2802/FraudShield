@@ -154,7 +154,7 @@ def synthesize(signals: list[Signal]) -> RiskDecision:
 
 # ---- DB-touching ----
 
-def run_risk_synthesis(
+def run_risk_synthesis_detailed(
     session: Session,
     transaction: Transaction,
     rule_result: RuleComplianceResult,
@@ -162,9 +162,11 @@ def run_risk_synthesis(
     prior_txn_count: int,
     extra_signals: Optional[list[Signal]] = None,
     model_version_id: Optional[int] = None,
-) -> RiskAssessment:
+) -> tuple[RiskAssessment, RiskDecision]:
     """
-    Build the signals, fuse, and persist one RiskAssessment row.
+    Build the signals, fuse, and persist one RiskAssessment row. Returns the
+    row AND the RiskDecision (with every Signal) so the Explanation Agent can
+    explain from structured evidence instead of parsing text.
 
     extra_signals is where Behavioral Analysis (Week 3) and Network
     Intelligence (Week 5) plug in. model_version_id stays None until a
@@ -184,4 +186,21 @@ def run_risk_synthesis(
     )
     session.add(assessment)
     session.flush()
+    return assessment, result
+
+
+def run_risk_synthesis(
+    session: Session,
+    transaction: Transaction,
+    rule_result: RuleComplianceResult,
+    device_result: DeviceTrustResult,
+    prior_txn_count: int,
+    extra_signals: Optional[list[Signal]] = None,
+    model_version_id: Optional[int] = None,
+) -> RiskAssessment:
+    """Same as run_risk_synthesis_detailed, returning only the RiskAssessment row."""
+    assessment, _ = run_risk_synthesis_detailed(
+        session, transaction, rule_result, device_result, prior_txn_count,
+        extra_signals=extra_signals, model_version_id=model_version_id,
+    )
     return assessment

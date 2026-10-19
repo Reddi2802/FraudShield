@@ -67,5 +67,7 @@ class TransactionResponse(BaseModel):
     decision: Literal["allow", "flag", "block"]
     risk_score: float
     explanation: str
+    # Week 5 (ADR-020): set only when the decision is flag or block.
+    case_id: int | None = None
 
     model_config = {"from_attributes": True}

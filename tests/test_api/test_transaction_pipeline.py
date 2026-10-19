@@ -47,7 +47,10 @@ def test_response_carries_decision_score_and_explanation(client):
     data = r.json()
     assert data["decision"] == "allow"
     assert data["risk_score"] == 0.0
-    assert data["explanation"].startswith("ALLOW (risk 0.00)")
+    # Week 5 (ADR-020): plain-language sentence first, technical evidence after it.
+    assert data["explanation"].startswith("Allowed: no signal raised enough risk.")
+    assert "Evidence: ALLOW (risk 0.00)" in data["explanation"]
+    assert data["case_id"] is None  # allowed transactions open no case
     assert data["transaction_id"] > 0  # Week 1 fields still present
 
 
@@ -78,3 +81,19 @@ def test_missing_device_is_reported_as_an_abstention(client):
     c, _ = client
     r = c.post("/transaction", json=_body(10 * DAY))
     assert "device abstained" in r.json()["explanation"]
+
+
+def test_flagged_transaction_returns_a_case_id(client):
+    c, TestSession = client
+    for i in range(3):
+        c.post("/transaction", json=_body(10 * DAY + i * 7200))
+    r = c.post("/transaction", json=_body(10 * DAY + 3 * 7200, amount=100.0))
+    data = r.json()
+    assert data["decision"] == "flag"
+    assert data["case_id"] is not None
+    assert data["explanation"].startswith("Flagged for review:")
+    from db.models import FraudCase
+
+    with TestSession() as s:  # committed by the route, visible to a fresh session
+        case = s.get(FraudCase, data["case_id"])
+        assert case is not None and case.transaction_id == data["transaction_id"]
