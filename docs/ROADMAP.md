@@ -80,12 +80,12 @@ Companion to `DECISIONS.md` (the *why*) — this is the *what's left*. Check ite
 
 ## Week 6 — Explanation + Case Management
 
-- [ ] `agents/explanation.py` — instant templated reason (sync) + richer reason via Ollama (async)
-- [ ] Ollama integration tested — `llama3.1:8b-instruct` pulled and actually called, latency checked
-- [ ] `agents/case_management.py` — opens a `FraudCase` only when decision is flag or block
-- [ ] Tests: template correctness, case only created under the right condition
+- [x] `agents/explanation.py` — deterministic plain-language sentence + technical evidence (ADR-020). The Ollama enrichment is a stretch item (#3)
+- [x] `agents/case_management.py` — opens a `FraudCase` only when the decision is flag or block; `case_id` returned by the API
+- [x] Tests: template correctness, case only created under the right condition
 - [ ] Commit
-- [ ] QnA checkpoint: sync/async split reasoning (ADR-004), how the LLM prompt is constructed
+- [ ] QnA checkpoint: why a deterministic template first (ADR-004), why the explanation reads structured evidence, why cases are idempotent and stamped with transaction time
+- [ ] (stretch #3) Ollama integration tested — `llama3.1:8b-instruct` pulled and actually called, latency checked
 
 ## Week 7 — Dashboard + auth
 

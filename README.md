@@ -31,7 +31,7 @@ POST /transaction
         ▼
   Risk Synthesis Agent  (fuses all signals → 0–1 score → allow/flag/block)
         │
-        ├─► Explanation Agent   (instant rule-based reason, async LLM reason)
+        ├─► Explanation Agent   (plain-language reason + technical evidence; LLM enrichment is a stretch item)
         └─► Case Management Agent  (if flagged/blocked → creates investigation case)
         │
         ▼
@@ -61,8 +61,8 @@ POST /transaction
 | Device Trust | Statistical | Device reuse, first-seen, age signals |
 | Network Intelligence | Graph analytics, async | Shared-device/address graph → ring risk |
 | Risk Synthesis | Aggregator | Fuses all signals → unified decision |
-| Explanation | Rule-based + local LLM | Instant templated reason + async natural-language reason |
-| Case Management | Deterministic | Creates/assigns/tracks investigation cases |
+| Explanation | Deterministic template (LLM = stretch) | Plain-language reason plus technical evidence |
+| Case Management | Deterministic | Opens a case per flagged/blocked transaction; stores investigator feedback |
 
 All 8 agents above are core scope (see `docs/DECISIONS.md`, ADR-008). A ninth agent, **Investigator Assistant** (semantic case search via embeddings), is conditional: it is only scheduled after the 8 core agents are complete and demoable, decided at a week-5 checkpoint (ADR-009). A Monitoring Agent was considered and dropped — not part of this project's scope.
 
@@ -91,7 +91,7 @@ ml/                # train_behavioral.py (XGBoost), evaluation
   artifacts/       # gitignored — trained model files, not committed
 dashboard/         # Streamlit app — not yet built
 scripts/           # seed_db.py, check_seed.py, prior_txn_buckets.py, feature_signal.py,
-                   # replay_eval.py; run_network_batch.py (week 5, not yet built)
+                   # replay_eval.py, # fusion_check.py; run_network_batch.py (week 5, not yet built)
 tests/             # pytest, mirrors agents/ and api/
   test_agents/
   test_api/
@@ -153,6 +153,9 @@ After deleting and re-seeding the DB, run it again with `--register-only` to re-
 End-to-end evaluation (replays the seeded customers through the full pipeline against the real fraud labels; reports the held-out period separately):
 ```bash
 uv run python -m scripts.replay_eval
+# replay saves per-signal scores; test fusion weights offline in seconds
+# after the replay finishes: test fusion weights offline in seconds
+uv run python -m scripts.fusion_check
 ```
 
 ## Roadmap

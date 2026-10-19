@@ -161,6 +161,16 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 **Results (first run on the full CSV, chronological split):** test period 177,162 rows (3.46% fraud): PR-AUC 0.140 (4.0x lift), ROC-AUC 0.789, coverage 100%. At the validation-chosen thresholds, flag covers 3.9% of transactions (precision 19.1%, recall 21.7%) and block 0.7% (precision 27.2%, recall 5.5%). End-to-end `replay_eval` on the 1,500 seeded customers, held-out period only (6,565 transactions, 278 fraud, 4.23% base rate): fraud rate allow 3.56%, flag 8.35%, block 20.2%; flag+block cover 10.4% of transactions with precision 10.1% (2.4x) and recall 24.8%; fused PR-AUC 0.104 (2.5x). The Rules + Device baseline had no lift (4.2% vs 4.43%). The held-out sample is small (278 fraud), so its lift carries wide uncertainty.
 
+## ADR-020 — Explanation is a deterministic plain-language template; cases open only on flag/block
+
+**Context:** Risk Synthesis already produced a technical evidence string, but it reads like a log line. ADR-004 splits explanation into an instant template and a slower local-LLM enrichment. The schema already holds FraudCase (UNIQUE per transaction), Feedback and Investigator, and the README promises a case_id in the API response.
+
+**Decision:** (1) The Explanation Agent writes one plain-language sentence from STRUCTURED evidence (rule violations, the device signal, the Behavioral model's positive top drivers) and keeps the technical string after it in the same explanation_text field: Flagged for review: the amount is much higher than this customer's usual spend. Evidence: FLAG (risk 0.60). rules 0.60: .... Behavioral reasons appear only when behavioral risk is at least 0.20, at most 4 reasons are listed, and nothing is parsed out of text. It is instant and never blocks a decision. (2) The Case Management Agent opens an OPEN, unassigned FraudCase only for flag or block, once per transaction (idempotent), stamped with the transaction's own timestamp (ADR-016). (3) POST /transaction returns case_id, null for allowed transactions. (4) run_risk_synthesis_detailed returns the full RiskDecision so downstream agents consume signals, not strings.
+
+**Rejected alternatives:** (1) LLM-generated explanations now — latency, local-hardware setup and failure modes for little demo value; stays a stretch item and would append to the template, not replace it. (2) A separate explanation column or table — needs a schema change for no benefit. (3) Case assignment logic — investigators pick cases up from the dashboard (Week 7). (4) Retraining from feedback here — a manual script with its own threshold decision in Week 8.
+
+**Consequence:** Every decision carries a human-readable reason that names only evidence the system actually produced. The previous assertions that an explanation began with "ALLOW (risk 0.00)" now check for "Evidence: ALLOW (risk 0.00)" instead.
+
 ---
 
 ## Open items (revisit as the project progresses)
