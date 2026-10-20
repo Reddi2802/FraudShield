@@ -58,13 +58,17 @@ def driver_phrase(name: str, value: float) -> str:
     if name == "hour":
         return f"the time of day (hour {int(value)}) carries elevated risk"
     if name == "prior_count":
-        return f"the customer has little history ({int(value)} earlier transactions)"
+        # Neutral wording on purpose: the model can raise risk for a LONG history too
+        # (in this dataset the fraud rate rises with history), so "little history"
+        # would be a claim the evidence does not support.
+        return f"the customer's history length ({int(value)} earlier transactions) is associated with higher risk"
     if name == "amt_ratio":
         return f"the amount is {value:.1f}x this customer's usual spend"
     if name == "amt_z":
         return f"the amount is {value:.1f} standard deviations above this customer's norm"
     if name == "secs_since_last":
-        return f"only {value / 60:.0f} minutes since this customer's previous transaction"
+        gap = f"{value / 60:.0f} minutes" if value < 7200 else f"{value / 3600:.1f} hours"
+        return f"the gap since this customer's previous transaction ({gap}) is associated with higher risk"
     return name.replace("_", " ")
 
 

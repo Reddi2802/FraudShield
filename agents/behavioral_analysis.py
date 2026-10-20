@@ -131,7 +131,7 @@ def run_behavioral_analysis(session: Session, transaction: Transaction) -> Behav
     risk_score = map_probability(probability, meta["calibration"])
     drivers = _top_drivers(model, row)
 
-    reason = f"model probability {probability:.3f}"
+    reason = f"model score {probability:.3f}"
     if drivers:
         reason += "; top drivers " + ", ".join(
             f"{_format_driver(n, v)} (+{c:.2f})" for n, v, c in drivers

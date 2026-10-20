@@ -93,6 +93,17 @@ def test_driver_phrases_cover_every_feature():
         assert driver_phrase(name, 1.0) and "_" not in driver_phrase(name, 1.0)
 
 
+def test_history_and_gap_drivers_do_not_claim_more_than_the_model_showed():
+    """A long history can raise risk too (fraud rate rises with history in this data),
+    so the phrase must not call 23 earlier transactions 'little history'."""
+    prior = driver_phrase("prior_count", 23.0)
+    assert "23 earlier transactions" in prior and "little" not in prior
+    assert "associated with higher risk" in prior
+    gap = driver_phrase("secs_since_last", 3600.0)
+    assert "60 minutes" in gap and "only" not in gap
+    assert "2.5 hours" in driver_phrase("secs_since_last", 9000.0)
+
+
 def test_full_text_fits_the_column():
     decision = synthesize([Signal("rules", 0.6, "x" * 3000)])
     _, full = compose_explanation(decision, AMOUNT_RULE, None)

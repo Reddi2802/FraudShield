@@ -97,7 +97,7 @@ def test_scores_a_transaction_with_history(db_session, registered):
         _txn(db_session, dt=10 * DAY + i * 7200)
     result = run_behavioral_analysis(db_session, _txn(db_session, dt=10 * DAY + 4 * 7200, amount=900.0))
     assert not result.abstained and 0.0 <= result.risk_score <= 1.0
-    assert result.reason.startswith("model probability")
+    assert result.reason.startswith("model score")
 
 
 # ---- wired into the pipeline ----
