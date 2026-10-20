@@ -71,3 +71,87 @@ class TransactionResponse(BaseModel):
     case_id: int | None = None
 
     model_config = {"from_attributes": True}
+
+
+# ---- Authentication (ADR-021) ----
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+    role: Literal["customer", "investigator"]
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
+    role: Literal["customer", "investigator"]
+    user_id: int
+
+
+class MyTransaction(BaseModel):
+    """One row of GET /transactions/me. decision / risk_score / explanation are
+    null for transactions that never went through the pipeline (the seeded
+    history was loaded directly into the database and has no RiskAssessment)."""
+
+    transaction_id: int
+    amount: float
+    currency: str
+    submitted_at: datetime
+    decision: Literal["allow", "flag", "block"] | None = None
+    risk_score: float | None = None
+    explanation: str | None = None
+    case_id: int | None = None
+
+
+# ---- Investigator cases (ADR-021) ----
+
+CaseStatus = Literal["open", "in_review", "resolved"]
+
+
+class CaseSummary(BaseModel):
+    case_id: int
+    transaction_id: int
+    status: CaseStatus
+    opened_at: datetime
+    decision: Literal["allow", "flag", "block"] | None = None
+    risk_score: float | None = None
+
+
+class CaseTransaction(BaseModel):
+    amount: float
+    currency: str
+    submitted_at: datetime
+    customer_id: int
+
+
+class FeedbackInfo(BaseModel):
+    label: Literal["fraud", "not_fraud"]
+    notes: str | None = None
+    investigator_id: int
+    submitted_at: datetime
+
+
+class CaseDetail(BaseModel):
+    case_id: int
+    transaction_id: int
+    status: CaseStatus
+    opened_at: datetime
+    resolved_at: datetime | None = None
+    transaction: CaseTransaction
+    decision: Literal["allow", "flag", "block"] | None = None
+    risk_score: float | None = None
+    explanation: str | None = None
+    feedback: FeedbackInfo | None = None
+
+
+class FeedbackRequest(BaseModel):
+    label: Literal["fraud", "not_fraud"]
+    notes: str | None = Field(default=None, max_length=500)
+
+
+class FeedbackResponse(BaseModel):
+    feedback_id: int
+    case_id: int
+    label: Literal["fraud", "not_fraud"]
+    notes: str | None = None
+    status: CaseStatus

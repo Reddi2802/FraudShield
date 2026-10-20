@@ -4,13 +4,35 @@ from __future__ import annotations
 
 import pytest
 from fastapi.testclient import TestClient
+from passlib.hash import bcrypt
 from sqlalchemy.orm import sessionmaker
 
+from agents.uid import clean_component, compute_uid
+from api.auth import create_access_token
 from api.main import app
-from db.models import RiskAssessment
+from db.models import Account, Customer, RiskAssessment
 from db.session import get_session
 
 DAY = 86400
+_FAST_HASH = bcrypt.using(rounds=4).hash("pw")
+
+
+def _login(TestSession, dt=10 * DAY, card1=1000):
+    """POST /transaction needs a logged-in customer who already exists (ADR-021):
+    pre-create the customer + account these payloads resolve to and return a
+    Bearer header for them. D1n is constant across _body(dt) calls, so one
+    customer covers every dt."""
+    with TestSession() as s:
+        uid = compute_uid(card1, 300.0, 5.0 + dt / DAY, dt / DAY)
+        customer = Customer(
+            synthetic_uid=uid, billing_region=clean_component(300.0), name="c",
+            email=f"{uid}@example.invalid", hashed_password=_FAST_HASH,
+        )
+        s.add(customer)
+        s.flush()
+        s.add(Account(customer_id=customer.customer_id, account_number=f"ACCT-{uid}", account_type="credit"))
+        s.commit()
+        return {"Authorization": f"Bearer {create_access_token(customer.customer_id, 'customer')}"}
 
 
 @pytest.fixture()
@@ -41,8 +63,9 @@ def _body(dt, amount=10.0, **extra):
 
 
 def test_response_carries_decision_score_and_explanation(client):
-    c, _ = client
-    r = c.post("/transaction", json=_body(10 * DAY))
+    c, TestSession = client
+    h = _login(TestSession)
+    r = c.post("/transaction", json=_body(10 * DAY), headers=h)
     assert r.status_code == 201
     data = r.json()
     assert data["decision"] == "allow"
@@ -55,39 +78,44 @@ def test_response_carries_decision_score_and_explanation(client):
 
 
 def test_amount_spike_is_flagged_through_the_api(client):
-    c, _ = client
+    c, TestSession = client
+    h = _login(TestSession)
     for i in range(3):
-        assert c.post("/transaction", json=_body(10 * DAY + i * 7200)).status_code == 201
-    r = c.post("/transaction", json=_body(10 * DAY + 3 * 7200, amount=100.0))
+        assert c.post("/transaction", json=_body(10 * DAY + i * 7200), headers=h).status_code == 201
+    r = c.post("/transaction", json=_body(10 * DAY + 3 * 7200, amount=100.0), headers=h)
     assert r.status_code == 201
     assert r.json()["decision"] == "flag"
     assert "amount_own_history" in r.json()["explanation"]
 
 
 def test_invalid_amount_is_still_422(client):
-    c, _ = client
-    r = c.post("/transaction", json=_body(10 * DAY, amount=-5.0))
+    c, TestSession = client
+    h = _login(TestSession)
+    r = c.post("/transaction", json=_body(10 * DAY, amount=-5.0), headers=h)
     assert r.status_code == 422
 
 
 def test_assessment_is_persisted_and_committed(client):
     c, TestSession = client
-    c.post("/transaction", json=_body(10 * DAY))
+    h = _login(TestSession)
+    c.post("/transaction", json=_body(10 * DAY), headers=h)
     with TestSession() as s:  # a fresh session sees it only if the route committed
         assert s.query(RiskAssessment).count() == 1
 
 
 def test_missing_device_is_reported_as_an_abstention(client):
-    c, _ = client
-    r = c.post("/transaction", json=_body(10 * DAY))
+    c, TestSession = client
+    h = _login(TestSession)
+    r = c.post("/transaction", json=_body(10 * DAY), headers=h)
     assert "device abstained" in r.json()["explanation"]
 
 
 def test_flagged_transaction_returns_a_case_id(client):
     c, TestSession = client
+    h = _login(TestSession)
     for i in range(3):
-        c.post("/transaction", json=_body(10 * DAY + i * 7200))
-    r = c.post("/transaction", json=_body(10 * DAY + 3 * 7200, amount=100.0))
+        c.post("/transaction", json=_body(10 * DAY + i * 7200), headers=h)
+    r = c.post("/transaction", json=_body(10 * DAY + 3 * 7200, amount=100.0), headers=h)
     data = r.json()
     assert data["decision"] == "flag"
     assert data["case_id"] is not None
