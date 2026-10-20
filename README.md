@@ -8,9 +8,9 @@ Most fraud detection student projects follow the same pattern: load a dataset, t
 
 1. **Multi-agent, not single-model.** Eight specialized agents, each responsible for one signal, coordinated via LangGraph instead of one monolithic classifier.
 2. **Explainable by construction.** Every decision carries a human-readable reason referencing the specific signal that triggered it — not a post-hoc SHAP plot bolted onto a black box.
-3. **Network-aware.** A scheduled Network Intelligence Agent builds a graph from shared devices/addresses across accounts and scores customer-level fraud-ring risk — a signal most single-transaction pipelines never compute.
+3. **Network-aware (planned).** A Network Intelligence Agent builds a graph from shared devices/addresses across accounts and scores customer-level fraud-ring risk — a signal most single-transaction pipelines never compute.
 
-Everything runs locally, including the LLM (Ollama), so there is no per-request API cost and no transaction data ever leaves the machine.
+Everything runs locally (SQLite, a local XGBoost model, no paid APIs), so there is no per-request API cost and no transaction data ever leaves the machine. A local LLM (Ollama) for richer explanations is a planned stretch item.
 
 ## Architecture
 
@@ -24,7 +24,7 @@ POST /transaction
   LangGraph Orchestrator (shared state)
         │
         ├─► Ingestion Agent            (enrich with customer/account history)
-        ├─► Rule Compliance Agent      (velocity, amount, geo limits)
+        ├─► Rule Compliance Agent      (velocity and amount limits)
         ├─► Device Trust Agent         (device reuse / first-seen signals)
         ├─► Behavioral Analysis Agent  (supervised XGBoost on time-gated history features)
         │
@@ -41,12 +41,12 @@ POST /transaction
   Streamlit Dashboard (live feed, per-agent status, case queue, analytics)
         │
         ▼
-  Investigator resolves case → Feedback stored → retraining trigger
+  Investigator resolves case → Feedback stored → manual retraining script (automatic trigger = stretch)
         │
         ▼
   Behavioral Analysis Agent retrained on updated labels
 
-  ── separately, on a schedule (APScheduler) ──
+  ── separately, as a batch job (manual script; scheduling is a stretch item) ──
   Network Intelligence Agent → builds device/address graph (networkx)
                               → NetworkRiskScore per customer
 ```
@@ -56,7 +56,7 @@ POST /transaction
 | Agent | Type | Role |
 |---|---|---|
 | Ingestion | Deterministic | Validates, normalizes, enriches with account history |
-| Rule Compliance | Deterministic | Velocity/amount/geo hard limits |
+| Rule Compliance | Deterministic | Velocity and amount hard limits |
 | Behavioral Analysis | ML (XGBoost, supervised) | Per-transaction fraud probability from time-gated customer-history features |
 | Device Trust | Statistical | Device reuse, first-seen, age signals |
 | Network Intelligence | Graph analytics, async | Shared-device/address graph → ring risk |
@@ -72,9 +72,9 @@ All 8 agents above are core scope (see `docs/DECISIONS.md`, ADR-008). A ninth ag
 - **API:** FastAPI + Uvicorn, JWT auth via `python-jose` + `passlib` (real auth for Customer/Investigator roles; Admin is a simplified role flag — see ADR-010)
 - **ML:** XGBoost (class-weighted, chronological validation), scikit-learn for metrics
 - **Graph analytics:** networkx
-- **LLM:** Ollama, `llama3.1:8b-instruct` (local, quantized — no API cost, no data leaves the device)
+- **LLM (stretch):** Ollama, `llama3.1:8b-instruct` (local, quantized — no API cost, no data leaves the device) for richer explanations
 - **Database:** SQLite + SQLAlchemy
-- **Scheduling:** APScheduler (Network Intelligence batch job, retraining trigger)
+- **Scheduling (stretch):** APScheduler for the Network Intelligence batch job and retraining trigger; until then both run as manual scripts
 - **Dashboard:** Streamlit + Plotly
 - **Testing:** pytest, GitHub Actions CI
 - **Package management:** uv
@@ -91,7 +91,8 @@ ml/                # train_behavioral.py (XGBoost), evaluation
   artifacts/       # gitignored — trained model files, not committed
 dashboard/         # Streamlit app — not yet built
 scripts/           # seed_db.py, check_seed.py, prior_txn_buckets.py, feature_signal.py,
-                   # replay_eval.py, # fusion_check.py; run_network_batch.py (week 5, not yet built)
+                   # replay_eval.py, fusion_check.py, seed_investigators.py, demo_auth_flow.py;
+                   # run_network_batch.py (not yet built)
 tests/             # pytest, mirrors agents/ and api/
   test_agents/
   test_api/
@@ -144,6 +145,17 @@ uv run python -m scripts.check_seed
 ```
 output must show 0 bad devices.
 
+Create the two demo investigators (idempotent; password `ChangeMe123!`, the same demo password as every seeded customer):
+```bash
+uv run python -m scripts.seed_investigators
+```
+Log in with `POST /auth/login` (`{email, password, role}`). Seeded customers: `seed.customer.00001@example.invalid`, role `customer`. Investigators: `investigator1@example.invalid`, role `investigator`. Set the `JWT_SECRET` environment variable for anything beyond a local demo (a development default is used, with a warning, when it is missing).
+
+See the whole flow (login, submit, flagged case, investigator review, feedback) with the server running in another terminal:
+```bash
+uv run python -m scripts.demo_auth_flow
+```
+
 Train the Behavioral Analysis model (writes `ml/artifacts/`, registers a `ModelVersion` row in the DB):
 ```bash
 uv run python -m ml.train_behavioral
@@ -153,7 +165,6 @@ After deleting and re-seeding the DB, run it again with `--register-only` to re-
 End-to-end evaluation (replays the seeded customers through the full pipeline against the real fraud labels; reports the held-out period separately):
 ```bash
 uv run python -m scripts.replay_eval
-# replay saves per-signal scores; test fusion weights offline in seconds
 # after the replay finishes: test fusion weights offline in seconds
 uv run python -m scripts.fusion_check
 ```
@@ -166,8 +177,8 @@ All 8 agents are core scope (ADR-008). Build order is sequenced by dependency an
 - **Week 2:** Rule Compliance Agent + Device Trust Agent (both deterministic/statistical, no ML training loop).
 - **Week 3:** Behavioral Analysis Agent (supervised XGBoost, ADR-019) — deepest ML component.
 - **Week 4:** Risk Synthesis Agent + orchestrator wiring — first end-to-end demo (Ingestion → Rules → Device → Behavioral → decision).
-- **Week 5 — checkpoint:** Network Intelligence Agent (graph metrics, async APScheduler job). Go/no-go decision on Investigator Assistant Agent made here against actual progress (ADR-009).
-- **Week 6:** Explanation Agent (sync template + async local LLM) + Case Management Agent.
+- **Week 5 — checkpoint:** Network Intelligence Agent (graph metrics; manual batch script, scheduler is a stretch item). Go/no-go decision on Investigator Assistant Agent made here against actual progress (ADR-009).
+- **Week 6:** Explanation Agent (deterministic template; LLM enrichment is a stretch item) + Case Management Agent.
 - **Week 7:** Streamlit dashboard, Customer/Investigator JWT auth, Admin role flag, integration testing.
 - **Week 8:** Test coverage (pytest), a minimal GitHub Actions CI workflow (run pytest on push), retraining-threshold decision, DECISIONS.md finalization, demo rehearsal.
 - **Week 9 (buffer):** Absorbs holiday/lab disruption; Investigator Assistant work lands here if greenlit at the week-5 checkpoint.

@@ -24,8 +24,8 @@ Companion to `DECISIONS.md` (the *why*) — this is the *what's left*. Check ite
 - [ ] Concrete rule thresholds decided and written down (not left vague) — values exist only as constants in `rule_compliance.py`; still need a section in `DECISIONS.md` or a config file
 - [x] `agents/device_trust.py` — device reuse count, first-seen flag, device age scoring (ADR-002: rule-based, not ML)
 - [x] `agents/device_identity.py` — shared fingerprint + `DeviceCustomerLink` helper used by both ingestion and seeding (ADR-014)
-- [x] Tests for both — files written (`test_rule_compliance.py`, `test_device_trust.py`, `test_device_timestamps.py`); tick once `uv run pytest` is green locally
-- [x] Commit — Week 2 code is committed; the tests and the datetime fix (ADR-016) are not yet
+- [x] Tests for both — `test_rule_compliance.py`, `test_device_trust.py`, `test_device_timestamps.py`
+- [x] Commit
 - [ ] QnA checkpoint: why Device Trust is statistical not ML, how thresholds were chosen
 
 ## Week 3 prep — do before `ml/train_behavioral.py`
@@ -43,8 +43,8 @@ Companion to `DECISIONS.md` (the *why*) — this is the *what's left*. Check ite
 
 > **Order change (agreed):** the orchestrator + Risk Synthesis were built first; Behavioral Analysis landed as a new node and one extra `Signal` (ADR-018, ADR-019). Model = supervised XGBoost, not an Isolation Forest (ADR-019).
 
-- [x] `agents/behavioral_features.py` — one feature builder shared by training and serving, time-gated, parity-tested (delivered; tick once `uv run pytest` is green)
-- [x] `ml/train_behavioral.py` — XGBoost, chronological split, calibration fitted on validation (delivered; tick once it has run locally)
+- [x] `agents/behavioral_features.py` — one feature builder shared by training and serving, time-gated, parity-tested
+- [x] `ml/train_behavioral.py` — XGBoost, chronological split, calibration fitted on validation
 - [x] First trained artifact saved to `ml/artifacts/` (gitignored)
 - [x] First `ModelVersion` row inserted — `trained_at`, `hyperparameters`, `metrics`, `artifact_path` populated for real
 - [x] `agents/behavioral_analysis.py` — scores every transaction, names top drivers; abstains only when no model is registered; wired into the orchestrator
@@ -83,15 +83,15 @@ Companion to `DECISIONS.md` (the *why*) — this is the *what's left*. Check ite
 - [x] `agents/explanation.py` — deterministic plain-language sentence + technical evidence (ADR-020). The Ollama enrichment is a stretch item (#3)
 - [x] `agents/case_management.py` — opens a `FraudCase` only when the decision is flag or block; `case_id` returned by the API
 - [x] Tests: template correctness, case only created under the right condition
-- [ ] Commit
+- [x] Commit
 - [ ] QnA checkpoint: why a deterministic template first (ADR-004), why the explanation reads structured evidence, why cases are idempotent and stamped with transaction time
 - [ ] (stretch #3) Ollama integration tested — `llama3.1:8b-instruct` pulled and actually called, latency checked
 
 ## Week 7 — Dashboard + auth
 
-- [ ] Real JWT auth for Customer and Investigator roles; Admin as a simplified flag (ADR-010) — no full login plumbing for Admin
+- [x] Real JWT auth for Customer and Investigator roles (ADR-021); Admin stays a simplified dashboard flag (ADR-010)
 - [ ] `dashboard/app.py` — Streamlit: live transaction feed, per-agent status, investigator case queue, analytics
-- [ ] Investigator case review + `Feedback` submission wired end-to-end into the database
+- [ ] Investigator case review + `Feedback` submission — API done (`/cases`, ADR-021); the dashboard form is still to build
 - [ ] Integration testing across the full stack (API + agents + dashboard)
 - [ ] Commit
 - [ ] QnA checkpoint: auth flow, how the dashboard reads/writes case data

@@ -161,6 +161,8 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 **Results (first run on the full CSV, chronological split):** test period 177,162 rows (3.46% fraud): PR-AUC 0.140 (4.0x lift), ROC-AUC 0.789, coverage 100%. At the validation-chosen thresholds, flag covers 3.9% of transactions (precision 19.1%, recall 21.7%) and block 0.7% (precision 27.2%, recall 5.5%). End-to-end `replay_eval` on the 1,500 seeded customers, held-out period only (6,565 transactions, 278 fraud, 4.23% base rate): fraud rate allow 3.56%, flag 8.35%, block 20.2%; flag+block cover 10.4% of transactions with precision 10.1% (2.4x) and recall 24.8%; fused PR-AUC 0.104 (2.5x). The Rules + Device baseline had no lift (4.2% vs 4.43%). The held-out sample is small (278 fraud), so its lift carries wide uncertainty.
 
+**Amendment:** the evidence string reports the Behavioral model's raw output as a "model score", not a "probability": class weighting makes it rank-calibrated only (see Consequence above).
+
 ## ADR-020 — Explanation is a deterministic plain-language template; cases open only on flag/block
 
 **Context:** Risk Synthesis already produced a technical evidence string, but it reads like a log line. ADR-004 splits explanation into an instant template and a slower local-LLM enrichment. The schema already holds FraudCase (UNIQUE per transaction), Feedback and Investigator, and the README promises a case_id in the API response.
@@ -170,6 +172,16 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 **Rejected alternatives:** (1) LLM-generated explanations now — latency, local-hardware setup and failure modes for little demo value; stays a stretch item and would append to the template, not replace it. (2) A separate explanation column or table — needs a schema change for no benefit. (3) Case assignment logic — investigators pick cases up from the dashboard (Week 7). (4) Retraining from feedback here — a manual script with its own threshold decision in Week 8.
 
 **Consequence:** Every decision carries a human-readable reason that names only evidence the system actually produced. The previous assertions that an explanation began with "ALLOW (risk 0.00)" now check for "Evidence: ALLOW (risk 0.00)" instead.
+
+## ADR-021 — JWT login for Customer and Investigator; customers act only on their own data
+
+**Context:** ADR-010 scoped real auth to the Customer and Investigator roles because they gate real pipeline actions. A customer in this system is identified by a synthetic UID derived from the card fields in the request payload, not by the login, so an authenticated customer could otherwise submit a transaction for any card.
+
+**Decision:** POST /auth/login (email, password, role) returns an HS256 JWT (sub, role, 60-minute expiry; secret from the JWT_SECRET environment variable, with a development default that logs a warning). get_current_user returns 401 for a missing, malformed, expired or forged token; require_customer and require_investigator return 403 for the wrong role. Customers: POST /transaction requires a customer token and, after the pipeline runs but before commit, compares the resolved customer with the logged-in one — a mismatch is a 403 with a rollback, so nothing is persisted and a customer cannot create new customers. GET /transactions/me returns only the caller's last 50 transactions (seeded history shows a null decision because it never went through the pipeline). Investigators: GET /cases (open by default, highest risk first), GET /cases/{id}, and POST /cases/{id}/feedback; the first feedback resolves the case and a second is a 409. Two demo investigators come from an idempotent script. Admin stays a dashboard-only flag (ADR-010).
+
+**Rejected alternatives:** (1) Letting any customer token submit any transaction and scoping only the history view — the role would mean little and the weakness is obvious in review. (2) Refresh tokens, logout or blacklist, registration, password reset — not needed for a local demo. (3) Putting the customer's UID in the token — the id in sub is enough and the UID stays server-side.
+
+**Consequence:** Every API test that submits a transaction now needs an existing customer and a token (customers must be seeded before they can log in). On a mismatch the pipeline has already run before the rollback; the check sits next to the pipeline's own identity resolution, which keeps it exact. Authentication is frozen after this ADR: no new auth features.
 
 ---
 
