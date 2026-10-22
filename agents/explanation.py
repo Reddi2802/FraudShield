@@ -85,6 +85,10 @@ def collect_reasons(
         if signal.agent == "device" and signal.score:
             reasons.extend(part.strip() for part in signal.reason.split(";") if part.strip())
 
+    for signal in signals:
+        if signal.agent == "network" and signal.score:
+            reasons.append(signal.reason)
+
     if (
         behavioral is not None
         and not behavioral.abstained

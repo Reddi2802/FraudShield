@@ -39,6 +39,7 @@ from agents.behavioral_analysis import (
 from agents.device_trust import DeviceTrustResult, run_device_trust
 from agents.history import count_prior_transactions
 from agents.ingestion import process_transaction
+from agents.network_intelligence import network_signal
 from agents.case_management import run_case_management
 from agents.explanation import run_explanation
 from agents.risk_synthesis import RiskDecision, run_risk_synthesis_detailed
@@ -85,7 +86,10 @@ def build_graph(session: Session):
             state["rule_result"],
             state["device_result"],
             state["prior_txn_count"],
-            extra_signals=[behavioral_signal(behavioral)],
+            extra_signals=[
+                behavioral_signal(behavioral),
+                network_signal(session, state["transaction"].account.customer_id),
+            ],
             model_version_id=behavioral.model_version_id,
         )
         return {"assessment": assessment, "risk_decision": decision}

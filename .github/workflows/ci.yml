@@ -1,0 +1,28 @@
+# Minimal CI (ADR-007, ROADMAP week 8): run the test suite on every push and pull
+# request to main. The tests need no dataset, no model files and no secrets: they
+# use in-memory SQLite and train tiny models themselves.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv (and the Python version the project pins)
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install dependencies from the lockfile
+        run: uv sync --locked
+
+      - name: Run tests
+        run: uv run pytest -q
