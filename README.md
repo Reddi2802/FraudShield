@@ -8,7 +8,7 @@ Most fraud detection student projects follow the same pattern: load a dataset, t
 
 1. **Multi-agent, not single-model.** Eight specialized agents, each responsible for one signal, coordinated via LangGraph instead of one monolithic classifier.
 2. **Explainable by construction.** Every decision carries a human-readable reason referencing the specific signal that triggered it — not a post-hoc SHAP plot bolted onto a black box.
-3. **Network-aware (planned).** A Network Intelligence Agent builds a graph from shared devices/addresses across accounts and scores customer-level fraud-ring risk — a signal most single-transaction pipelines never compute.
+3. **Network-aware.** A Network Intelligence Agent builds a graph from devices shared across accounts and scores customer-level fraud-ring risk — a signal most single-transaction pipelines never compute.
 
 Everything runs locally (SQLite, a local XGBoost model, no paid APIs), so there is no per-request API cost and no transaction data ever leaves the machine. A local LLM (Ollama) for richer explanations is a planned stretch item.
 
@@ -38,7 +38,7 @@ POST /transaction
   FastAPI Response (decision, score, explanation, case_id)
         │
         ▼
-  Streamlit Dashboard (live feed, per-agent status, case queue, analytics)
+  Streamlit Dashboard (submit page, case queue, admin overview)
         │
         ▼
   Investigator resolves case → Feedback stored → manual retraining script (automatic trigger = stretch)
@@ -47,7 +47,7 @@ POST /transaction
   Behavioral Analysis Agent retrained on updated labels
 
   ── separately, as a batch job (manual script; scheduling is a stretch item) ──
-  Network Intelligence Agent → builds device/address graph (networkx)
+  Network Intelligence Agent → builds shared-device graph (networkx)
                               → NetworkRiskScore per customer
 ```
 
@@ -59,7 +59,7 @@ POST /transaction
 | Rule Compliance | Deterministic | Velocity and amount hard limits |
 | Behavioral Analysis | ML (XGBoost, supervised) | Per-transaction fraud probability from time-gated customer-history features |
 | Device Trust | Statistical | Device reuse, first-seen, age signals |
-| Network Intelligence | Graph analytics, async | Shared-device/address graph → ring risk |
+| Network Intelligence | Graph analytics (batch script) | Shared-device graph → ring risk |
 | Risk Synthesis | Aggregator | Fuses all signals → unified decision |
 | Explanation | Deterministic template (LLM = stretch) | Plain-language reason plus technical evidence |
 | Case Management | Deterministic | Opens a case per flagged/blocked transaction; stores investigator feedback |
@@ -89,10 +89,11 @@ api/               # FastAPI app, entry point, request/response models, JWT auth
 db/                # SQLAlchemy models + session/engine, schema follows the Lab5 ERD
 ml/                # train_behavioral.py (XGBoost), evaluation
   artifacts/       # gitignored — trained model files, not committed
-dashboard/         # Streamlit app — not yet built
+dashboard/         # Streamlit app: Submit transaction (customer), Case queue (investigator),
+                   # Admin overview (demo flag)
 scripts/           # seed_db.py, check_seed.py, prior_txn_buckets.py, feature_signal.py,
-                   # replay_eval.py, fusion_check.py, seed_investigators.py, demo_auth_flow.py;
-                   # run_network_batch.py (not yet built)
+                   # replay_eval.py, fusion_check.py, seed_investigators.py, demo_auth_flow.py,
+                   # run_network_batch.py, feedback_status.py
 tests/             # pytest, mirrors agents/ and api/
   test_agents/
   test_api/
@@ -105,7 +106,7 @@ pyproject.toml
 uv.lock
 ```
 
-Note: `.github/workflows/` (CI) does not exist yet — it's a week-8 addition (see Roadmap), added once there's a test suite worth running on push, not scaffolded early.
+CI: `.github/workflows/ci.yml` runs the test suite on every push and pull request to `main`.
 
 ## Setup
 
@@ -128,10 +129,11 @@ Run the API:
 uv run uvicorn api.main:app --reload
 ```
 
-Run the dashboard:
+Run the dashboard (from the repo root, with the API running in another terminal; `API_URL` overrides the default `http://127.0.0.1:8000`):
 ```bash
 uv run streamlit run dashboard/app.py
 ```
+Log in from the sidebar with a demo account (password `ChangeMe123!`): `seed.customer.00001@example.invalid` as `customer`, or `investigator1@example.invalid` as `investigator`. The sidebar checkbox **Admin view (demo flag)** shows a read-only overview.
 
 Run tests:
 ```bash
@@ -167,6 +169,16 @@ End-to-end evaluation (replays the seeded customers through the full pipeline ag
 uv run python -m scripts.replay_eval
 # after the replay finishes: test fusion weights offline in seconds
 uv run python -m scripts.fusion_check
+```
+
+Network Intelligence batch job (run after seeding and whenever device links change; Risk Synthesis reads the latest scores):
+```bash
+uv run python -m scripts.run_network_batch
+```
+
+How much investigator feedback has arrived since the model was trained (ADR-025):
+```bash
+uv run python -m scripts.feedback_status
 ```
 
 ## Roadmap

@@ -21,7 +21,7 @@ Companion to `DECISIONS.md` (the *why*) — this is the *what's left*. Check ite
 ## Week 2 — Rule Compliance + Device Trust
 
 - [x] `agents/rule_compliance.py` — velocity and amount checks; writes `RuleViolation` rows. The geo/billing rule was rejected as structurally unreachable, not deferred (ADR-015)
-- [ ] Concrete rule thresholds decided and written down (not left vague) — values exist only as constants in `rule_compliance.py`; still need a section in `DECISIONS.md` or a config file
+- [x] Concrete rule thresholds recorded with their evidence (ADR-026)
 - [x] `agents/device_trust.py` — device reuse count, first-seen flag, device age scoring (ADR-002: rule-based, not ML)
 - [x] `agents/device_identity.py` — shared fingerprint + `DeviceCustomerLink` helper used by both ingestion and seeding (ADR-014)
 - [x] Tests for both — `test_rule_compliance.py`, `test_device_trust.py`, `test_device_timestamps.py`
@@ -69,12 +69,12 @@ Companion to `DECISIONS.md` (the *why*) — this is the *what's left*. Check ite
 
 ## Week 5 — Network Intelligence + checkpoint
 
-- [ ] `agents/network_intelligence.py` — networkx graph from shared device/address (ADR-003: classical metrics, not a GNN)
-- [ ] `scripts/run_network_batch.py` — the APScheduler job definition
-- [ ] Writes `NetworkRiskScore` rows periodically
-- [ ] Risk Synthesis updated to read the latest score for a customer (defaults to neutral before the first batch run completes)
-- [ ] **Checkpoint: go/no-go on Investigator Assistant** — evaluate actual weeks 1–4 progress, write the decision into `DECISIONS.md` either way (ADR-009)
-- [ ] Tests: graph construction on sample data, score computation
+- [x] `agents/network_intelligence.py` — networkx shared-device graph; degree, clustering, component size (ADR-003, ADR-024)
+- [x] `scripts/run_network_batch.py` — manual batch job (the scheduler is a stretch item)
+- [x] Writes `NetworkRiskScore` rows (append-only; the latest row per customer wins)
+- [x] Risk Synthesis reads the latest score per customer (abstains, with a stated reason, when there is none)
+- [x] **Checkpoint: go/no-go on Investigator Assistant** — no-go, recorded in ADR-009 (amendment)
+- [x] Tests: graph construction, score computation, batch, signal, pipeline
 - [ ] Commit
 - [ ] QnA checkpoint: degree/clustering-coefficient as fraud signals, why classical graph metrics over a GNN
 
@@ -90,17 +90,17 @@ Companion to `DECISIONS.md` (the *why*) — this is the *what's left*. Check ite
 ## Week 7 — Dashboard + auth
 
 - [x] Real JWT auth for Customer and Investigator roles (ADR-021); Admin stays a simplified dashboard flag (ADR-010)
-- [ ] `dashboard/app.py` — Streamlit: live transaction feed, per-agent status, investigator case queue, analytics
-- [ ] Investigator case review + `Feedback` submission — API done (`/cases`, ADR-021); the dashboard form is still to build
+- [x] `dashboard/` — Streamlit: Submit transaction (customer), Case queue (investigator), Admin overview (demo flag) (ADR-023); live feed and per-agent status panels are stretch
+- [x] Investigator case review + `Feedback` submission — API (`/cases`, ADR-021) and the dashboard form
 - [ ] Integration testing across the full stack (API + agents + dashboard)
 - [ ] Commit
 - [ ] QnA checkpoint: auth flow, how the dashboard reads/writes case data
 
 ## Week 8 — Tests, CI, polish
 
-- [ ] Expand pytest coverage across all 8 agents and the API layer
-- [ ] `.github/workflows/` — one minimal CI workflow, runs pytest on push
-- [ ] **Resolve the retraining-threshold open item** — pick an actual number, write it into `DECISIONS.md`
+- [x] Expand pytest coverage across all 8 agents and the API layer (199 tests)
+- [x] `.github/workflows/` — one minimal CI workflow, runs pytest on push
+- [x] **Resolve the retraining-threshold open item** — 100 labels, written into `DECISIONS.md` (ADR-025)
 - [ ] `DECISIONS.md` finalization pass — confirm it reflects what was actually built, not just what was planned
 - [ ] Demo rehearsal — practice explaining every agent, not just running the demo
 

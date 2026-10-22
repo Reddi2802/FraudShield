@@ -58,6 +58,8 @@ This log records why this system is built the way it is. The original SE lab sub
     - **Investigator Assistant Agent (FAISS semantic case search): conditional.** All 8 core agents are built and demonstrable end-to-end first, no exceptions. At the **week-5 checkpoint**, evaluate actual progress against the plan below. Only if the 8-agent pipeline is on track does Investigator Assistant get scheduled into the remaining weeks. This is a scheduled decision point, not an open-ended "if time allows."
 **Why:** "If time allows" is how scope drifted before (new agent nearly every lab). A dated checkpoint with a concrete precondition (8 agents done) replaces that pattern with an actual decision rule.
 
+**Amendment (checkpoint outcome):** No-go. The 8 core agents are only now complete and demoable, the schedule is tight, and the Investigator Assistant (semantic case search) would add a model, an index and a new UI surface without changing the core detection story. It is the last item on the stretch list. The human Investigator role is unaffected: cases, feedback and review are implemented (ADR-021, ADR-023).
+
 ## ADR-010 — RBAC scoped to where it gates real pipeline behavior
 
 **Context:** Admin does not correspond to any of the 8 diagrammed agents — Lab5 treats Admin capabilities (configure rules, manage investigators, view logs) as dashboard-level actor conveniences, not system modules. Customer and Investigator roles, by contrast, gate real pipeline actions: submitting a transaction, reviewing/resolving a fraud case.
@@ -183,12 +185,59 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 **Consequence:** Every API test that submits a transaction now needs an existing customer and a token (customers must be seeded before they can log in). On a mismatch the pipeline has already run before the rollback; the check sits next to the pipeline's own identity resolution, which keeps it exact. Authentication is frozen after this ADR: no new auth features.
 
+## ADR-022 — Fusion weights kept after an offline check against held-out data
+
+**Context:** The held-out replay flagged or blocked 10.4% of transactions against a ~5% design target. `scripts/fusion_check.py` re-fused the saved per-signal scores under five weight variants (current, rules halved, device off, rules off, behavioral only) on the held-out period (6,565 transactions, 278 fraud).
+
+**Decision:** Keep the ADR-018 weights (rules 1.0, device 0.8, behavioral 1.0). Held-out PR-AUC lift is the same across all variants (2.42-2.47x), so the weights change how many transactions are flagged, not how well they are ranked. The extra flags the rules add (about 189 transactions) caught about 8 more fraud cases, a precision of 4.2%, equal to the base rate; the device signal's extra flags (about 140) caught about 13 (9.3%, roughly 2.2x). Both counts are small, so they are indicative only.
+
+**Rejected alternatives:** Halving or removing the rules' weight would cut flagged volume by 1.4 to 2.9 points, but the held-out sample (278 fraud) cannot separate the variants, the all-rows table favors behavioral-only only because the model trained on those rows, and the change would alter every rule-driven decision, test and demo scenario for a small gain.
+
+**Consequence:** Rule Compliance stays a compliance layer, not a fraud ranker; ranking quality comes from the Behavioral model (about 2.5x lift held-out). Revisit the rules' weight if a larger sample is available or the flag rate matters for the demo. The expanded feature set remains the main performance lever.
+
+## ADR-023 — Dashboard: three pieces, API-first, two read-only database reads
+
+**Context:** The demo has to show the whole story from a browser: a customer submits a transaction and sees the decision and explanation, then an investigator reviews the case and records feedback. ADR-021 froze the authentication surface and ADR-010 keeps Admin as a no-login flag.
+
+**Decision:** A Streamlit app with a Submit transaction page (customer), a Case queue page (investigator) and an Admin overview behind a sidebar demo flag. Every customer and investigator action goes through the REST API with the logged-in user's own JWT, so the same authentication and scope rules apply as for any other client. The Submit page pre-fills card1, addr1 and D1n by parsing the customer's `synthetic_uid` and sends `D1 = transaction_dt/86400 - D1n`, so the UID resolves to the same customer (the opposite sign would change the UID and the API would answer 403); the default time is one hour after the customer's latest transaction. Two read-only database reads bypass the API: the customer's own UID (the API deliberately does not expose it, and a new endpoint would reopen the frozen auth surface) and the Admin overview (Admin has no login).
+
+**Rejected alternatives:** (1) A `GET /customers/me` endpoint for the UID, which reopens ADR-021. (2) A live feed, auto-refresh and per-agent status panels, which stay stretch items. (3) Plotly charts, since Streamlit's built-in charts are enough for decision and case counts.
+
+**Consequence:** The dashboard must run from the repo root next to `fraud_detection.db`, with the API running (the `API_URL` environment variable overrides the default `http://127.0.0.1:8000`). The Admin overview is not access-controlled, by design (ADR-010). The helpers that carry logic (UID parsing, the D1 sign, the default time) are unit-tested; the pages themselves are verified by running the app.
+
+## ADR-024 — Network Intelligence: a thin shared-device graph, run as a manual batch
+
+**Context:** ADR-003 chose classical graph metrics over a GNN, and the README promised a scheduled agent. IEEE-CIS has no ring ground truth, and only a minority of devices are shared (about 112 of 1,359 in the seeded data), so most customers will have no network signal.
+
+**Decision:** Customers are nodes and two customers are connected when `DeviceCustomerLink` links both to the same device (networkx). Per customer: degree, clustering coefficient and component size; `score = min(1.0, 0.25 * degree + 0.25 * clustering)`. Only customers who share a device get a row; absence means no signal, and `network_signal` abstains with the reason `no network score computed`. `scripts/run_network_batch.py` is run manually and appends `NetworkRiskScore` rows (the latest row per customer wins, history is kept). Per-transaction scoring only reads the latest row, so the pipeline never waits on graph work. Risk Synthesis uses the existing network weight (0.8, ADR-018), and the Explanation Agent adds `linked to N other customers via shared devices` when the score is positive.
+
+**Rejected alternatives:** (1) An APScheduler job now — a stretch item. (2) A GNN — no labelled rings to validate it against (ADR-003). (3) Shared-address edges — `addr1` is too coarse to link anyone (ADR-015). (4) Computing the graph inside the request path — it would put graph work between a customer and their decision.
+
+**Consequence:** The weights are starting points, not tuned values (nothing to tune against). Run the batch after seeding and whenever device links change; each run rebuilds the whole graph. Most customers show `network abstained` in their evidence, which is the dataset's reality, not a defect.
+
+## ADR-025 — Retraining threshold: 100 investigator labels; feedback is counted, not yet trained on
+
+**Context:** The roadmap left the retraining trigger open. The model trains on the Kaggle labels in the CSV (ADR-019), while investigator `Feedback` is stored per case (ADR-021). Folding feedback into training needs feature rows for transactions that are not CSV rows, a training/serving parity check for them, and a label-delay policy (open item).
+
+**Decision:** The threshold is 100 new `Feedback` labels since the latest `ModelVersion` was trained (`RETRAIN_AFTER_LABELS` in `scripts/feedback_status.py`, reported by `uv run python -m scripts.feedback_status`). A model trained on about 590K labelled rows barely moves for a handful of labels, and 100 is the smallest batch that can be evaluated on its own. The script is read-only: it does not retrain, and feedback does not yet enter training.
+
+**Rejected alternatives:** (1) Automatic retraining on a schedule (APScheduler) — a stretch item. (2) Merging feedback labels into the training set now — needs the parity and label-delay work above.
+
+**Consequence:** Feedback is collected, counted and auditable, but it does not improve the model automatically. That is the honest answer to "does feedback improve the model?". The number is a judgment, not a derived value; change the constant if the label rate or the stretch work changes.
+
+## ADR-026 — Rule Compliance thresholds: conventional limits, recorded with their evidence
+
+**Context:** The rule thresholds were constants in `agents/rule_compliance.py` with no recorded rationale, an open item since Week 2.
+
+**Decision:** Velocity: more than 5 transactions within 1 hour (counting the current one) is a medium-severity violation (0.4). Amount: with at least 3 earlier transactions, an amount above 3.0x the customer's own mean is high severity (0.6); with fewer, an amount above the global 99th percentile is medium (0.4). These are conventional compliance limits, not values tuned on the data. Evidence: on the full CSV, a repeat within 1 hour has 1.91x lift on 15.8% of rows (so a limit of more than 5 per hour almost never fires), and an amount above 3x the customer's own mean has 1.37x lift on 1.2% of rows (`scripts/feature_signal.py`). In the held-out replay the rules' extra flags (about 189) caught about 8 fraud cases, a precision of 4.2%, equal to the base rate (ADR-022).
+
+**Rejected alternatives:** (1) Tuning the thresholds on the same data used to evaluate them. (2) Lowering the velocity limit to match the 1.91x signal — it would flag 15.8% of traffic at about 6.7% precision.
+
+**Consequence:** Rules are compliance checks, not fraud rankers (ADR-022). The honest QnA answer to "how were the thresholds chosen" is: conventional limits, then measured; here they add volume without lift.
+
 ---
 
 ## Open items (revisit as the project progresses)
 
-- Retraining trigger threshold (how many new `Feedback` labels before the Behavioral Analysis Agent retrains) — not yet finalized; to be set when the Behavioral Analysis / Case Management feedback loop is built.
-- Week-5 checkpoint (ADR-009): go/no-go on Investigator Assistant Agent, decided against actual progress at that point, not in advance.
-- Rule Compliance thresholds (velocity above 5 transactions per hour, amount above 3x own mean, global p99 fallback) are constants in code with no recorded rationale. `feature_signal` shows repeat-within-1h at 1.91x lift and amount-spike at 1.37x lift on the full data; record the chosen thresholds and their evidence here.
 - Expanded feature set (C/D/dist1/card4 columns, ~14x lift in `feature_signal`) is a stretch item, decided only after the core pipeline is complete (needs an API payload and storage change plus a new ADR).
 - Label delay: investigators confirm fraud with a lag, so a production retraining loop would leave a gap between the training window and the evaluation window. The current chronological split has no gap; note this as a known limitation.
