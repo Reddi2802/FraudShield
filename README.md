@@ -181,6 +181,28 @@ How much investigator feedback has arrived since the model was trained (ADR-025)
 uv run python -m scripts.feedback_status
 ```
 
+## Website UI (ADR-027)
+
+Build once (needs Node 20+), then run the API, which also serves the site:
+
+```bash
+cd web && npm install && npm run build && cd ..   # writes web/out
+uv run uvicorn api.main:app                       # open http://127.0.0.1:8000
+```
+
+Log in with the same demo accounts as before (password `ChangeMe123!`). The Admin overview is reachable without
+login via the sidebar or `#/admin`. Rebuild (`npm run build`) after any change under `web/`.
+
+Frontend dev loop with hot reload (API on :8000, site on :3000):
+
+```bash
+uv run uvicorn api.main:app        # terminal 1
+cd web && npm run dev              # terminal 2, set NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000
+```
+
+UI work without a backend: `NEXT_PUBLIC_USE_MOCK=true npm run dev` (sample data, never the default).
+Existing databases need no migration: `AgentLog` already exists; older transactions simply show no signal breakdown.
+
 ## Roadmap
 
 All 8 agents are core scope (ADR-008). Build order is sequenced by dependency and complexity, not by an artificial core/extension split:

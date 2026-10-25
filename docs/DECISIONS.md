@@ -235,6 +235,38 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 **Consequence:** Rules are compliance checks, not fraud rankers (ADR-022). The honest QnA answer to "how were the thresholds chosen" is: conventional limits, then measured; here they add volume without lift.
 
+## ADR-027 — Website UI: per-agent audit trail, three additive endpoints, static export served by FastAPI
+
+**Context:** The Streamlit dashboard (ADR-023) reads the database directly in two places and asks the customer for a simulated TransactionDT and a hand-computed D1. A separate website cannot read SQLite, and a customer-facing form cannot ask for either value. Separately, Risk Synthesis builds one `Signal` per agent but only the flattened explanation string was stored, so no client could show "rules 0.60, device 0.15, behavioral 0.00, network abstained" without parsing text, which ADR-020 rejects.
+
+**Decision:** (1) The orchestrator writes one `AgentLog` row per Signal (`raw_output = {score, reason, weight}`; score null = abstained; the fusion weight in force is stored so later weight changes cannot rewrite history). `AgentLog` has existed since Week 1 and was unused. (2) Additive API surface, auth and roles unchanged: `GET /customers/me`, `POST /transactions/me` (amount, product_cd, card6, optional device fields; the server derives card1, addr1, D1 and the simulated time from the stored UID and the latest transaction), `GET /admin/overview` (replaces the direct database read, includes `feedback_status` data), and an optional `signals` field on `POST /transaction*` and `GET /cases/{id}`. (3) The website (`web/`, Next.js static export) is built once to `web/out` and mounted by FastAPI at `/` after all API routes: one process, one origin, no CORS in normal use (a CORS allowance for localhost:3000 exists only for the frontend dev loop).
+
+**Evidence:** `D1 = days - D1n` is not exact in floating point: over 5,000 random (time, D1n) pairs the naive formula lands one day low in a measurable share of cases, which silently changes the UID and the API answers 403. `api/identity.d1_for` subtracts 1e-6 day first; `tests/test_api/test_identity.py` asserts both the failure of the naive form and the safety of the fixed form.
+
+**Rejected alternatives:** (1) A standalone React deployment — needs CORS, a second server and a second auth story for no benefit in a local demo. (2) Parsing the explanation string for the breakdown — rejected in ADR-020. (3) A full Admin role with JWT — Admin exercises no pipeline behavior (ADR-010 unchanged). (4) A mock-by-default frontend — the generated code defaulted to mock data; mock is now opt-in (`NEXT_PUBLIC_USE_MOCK=true`).
+
+**Consequence:** `GET /admin/overview` is UNAUTHENTICATED, exactly like the Streamlit Admin flag (ADR-010): fine on localhost, not for a public network. The simulated clock from ADR-023 is kept (next transaction = latest + 1 hour), so submitted dates fall in 2017-18. `api/identity.py` duplicates `dashboard/helpers.parse_uid` and `d1_for` on purpose so the API never imports the dashboard; delete the dashboard copy if Streamlit is retired. Seeded history has no AgentLog, so its `signals` is null.
+
+## ADR-028 — Customers see a status, never the scoring internals
+
+**Context:** The first website build (ADR-027) and the Streamlit page before it showed the customer their risk score, the rule and device reasons, the behavioral model's top drivers and the case number. A customer who can read those can probe the thresholds (which amounts, devices and times pass) and shape fraud around them. Hiding the fields only in the page is not enough: the same fields were in the API response, readable in any browser's developer tools.
+
+**Decision:** Customer-facing endpoints return a status and a message only. `POST /transactions/me` returns `{transaction_id, amount, currency, submitted_at, status, message}` and `GET /transactions/me` returns `{transaction_id, amount, currency, submitted_at, status}`. `status` is `approved` (allow), `under_review` (flag) or `declined` (block); the words flag and block never reach a customer. The score, explanation, per-agent signals (ADR-027), case id, synthetic UID, customer id and device id stay out of customer responses. Investigators keep the full detail through `GET /cases` and `GET /cases/{id}`; the Admin overview is unchanged. `tests/test_api/test_web_endpoints.py` asserts the exact key set and that none of the leaky keys appear.
+
+**Rejected alternatives:** (1) Hiding the fields in the UI only, leaving the API unchanged: still readable in DevTools. (2) A generic "declined" with no reason for both review and decline: under review tells the customer to expect contact, which is the honest outcome of a flag.
+
+**Consequence:** This supersedes the part of ADR-021 that described `GET /transactions/me` returning decision, risk_score and explanation. The legacy raw endpoint `POST /transaction` is unchanged and still returns the full response for scripts and tests (`scripts/demo_auth_flow.py` uses it); it is customer-token authenticated, so it is the one remaining place a customer could read scores. Delete it or restrict it before showing the API to anyone you do not trust. Existing tests of `GET /transactions/me` that assert `decision` or `risk_score` must be updated to assert `status`.
+
+## ADR-029 — The website shows rupees at a fixed demo rate; data and model stay in dollars
+
+**Context:** The app is demonstrated in India, so amounts should read in rupees. The database, the Behavioral model and the rules are all in the dataset's native currency (USD): the model learned "normal" at that scale (a typical amount of about 58). Relabelling a dollar amount as rupees, or sending a rupee number to the model as if it were dollars, would score it out of distribution and make the fraud logic less credible.
+
+**Decision:** Localize in the website only. `web/lib/currency.ts` holds one constant, `USD_TO_INR = 95` (a demo value fixed by the project owner, not a live exchange rate). Amounts from the API are displayed as rupees with Indian digit grouping (`en-IN`, for example ₹4,75,000.00). The customer form takes rupees and converts to dollars (rounded to 4 decimals) before sending, so a one-rupee transaction is still a valid positive amount. The backend, the model, the rules and every stored amount are unchanged. The investigator's technical evidence still quotes dataset dollars and says so beside it.
+
+**Rejected alternatives:** (1) Relabelling only: the model would score rupee-sized numbers as dollars. (2) Converting in the backend or the database: touches the model's training data, every rule threshold and every test for a display preference. (3) A live exchange-rate API: adds a network dependency for a local demo.
+
+**Consequence:** Changing the demo rate is a one-line edit. The explanation text from the backend contains dollar figures (for example "amount 5000.00 > 3.0x customer's own mean 58.88"); those are shown unconverted and labelled as dollars rather than rewriting backend text. Only `web/` changes; no backend file or test is affected.
+
 ---
 
 ## Open items (revisit as the project progresses)
