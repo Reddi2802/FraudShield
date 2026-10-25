@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from api.auth import AuthUser, require_investigator
+from api.signals import signals_for_transaction
 from api.schemas import (
     CaseDetail,
     CaseStatus,
@@ -101,6 +102,7 @@ def get_case(
         )
         if feedback
         else None,
+        signals=signals_for_transaction(transaction),
     )
 
 

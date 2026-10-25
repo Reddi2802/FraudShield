@@ -13,3 +13,5 @@ ml/artifacts/*
 .ruff_cache/
 # derived extract of the Kaggle data (license: not redistributable) — keep local
 txn_uid_cols.csv
+
+*.zip

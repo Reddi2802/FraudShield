@@ -53,6 +53,15 @@ class TransactionRequest(BaseModel):
         return value.upper()
 
 
+class SignalOut(BaseModel):
+    """One agent's contribution to a decision (ADR-027). score None = the agent abstained."""
+
+    agent: str
+    score: float | None
+    reason: str
+    weight: float
+
+
 class TransactionResponse(BaseModel):
     transaction_id: int
     synthetic_uid: str
@@ -69,6 +78,8 @@ class TransactionResponse(BaseModel):
     explanation: str
     # Week 5 (ADR-020): set only when the decision is flag or block.
     case_id: int | None = None
+    # ADR-027: per-agent breakdown, from AgentLog. Additive: older clients ignore it.
+    signals: list[SignalOut] | None = None
 
     model_config = {"from_attributes": True}
 
@@ -88,19 +99,36 @@ class TokenResponse(BaseModel):
     user_id: int
 
 
+CustomerStatus = Literal["approved", "under_review", "declined"]
+CUSTOMER_STATUS_BY_DECISION = {"allow": "approved", "flag": "under_review", "block": "declined"}
+CUSTOMER_MESSAGES = {
+    "approved": "Your transaction was approved.",
+    "under_review": "Your transaction is being reviewed. We will contact you if we need anything else.",
+    "declined": "We could not process this transaction. Please contact support.",
+}
+
+
 class MyTransaction(BaseModel):
-    """One row of GET /transactions/me. decision / risk_score / explanation are
-    null for transactions that never went through the pipeline (the seeded
-    history was loaded directly into the database and has no RiskAssessment)."""
+    """One row of GET /transactions/me. CUSTOMER-SAFE (ADR-028): a status only, never the
+    risk score, explanation, signals or case id, which would let a customer probe the
+    thresholds. status is null for history loaded before the pipeline existed."""
 
     transaction_id: int
     amount: float
     currency: str
     submitted_at: datetime
-    decision: Literal["allow", "flag", "block"] | None = None
-    risk_score: float | None = None
-    explanation: str | None = None
-    case_id: int | None = None
+    status: CustomerStatus | None = None
+
+
+class CustomerTransactionResult(BaseModel):
+    """Response of POST /transactions/me. CUSTOMER-SAFE (ADR-028)."""
+
+    transaction_id: int
+    amount: float
+    currency: str
+    submitted_at: datetime
+    status: CustomerStatus
+    message: str
 
 
 # ---- Investigator cases (ADR-021) ----
@@ -142,6 +170,7 @@ class CaseDetail(BaseModel):
     risk_score: float | None = None
     explanation: str | None = None
     feedback: FeedbackInfo | None = None
+    signals: list[SignalOut] | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -155,3 +184,57 @@ class FeedbackResponse(BaseModel):
     label: Literal["fraud", "not_fraud"]
     notes: str | None = None
     status: CaseStatus
+
+
+# ---- Web UI endpoints (ADR-027) ----
+
+class CustomerMe(BaseModel):
+    customer_id: int
+    name: str
+    email: str
+    card1: int | None = None  # masked IEEE-CIS identifier, NOT a real card number
+    billing_region: str | None = None
+    typical_amount: float | None = None  # median of the customer's amounts
+    transaction_count: int
+
+
+class MyTransactionRequest(BaseModel):
+    """What the website sends. The server derives card, region, D1 and the simulated
+    time from the logged-in customer, so none of those can be wrong or spoofed."""
+
+    amount: float = Field(gt=0)
+    product_cd: Literal["W", "C", "R", "H", "S"]
+    card6: Literal["credit", "debit"] = "credit"
+    device_type: str | None = Field(default=None, max_length=100)
+    device_info: str | None = Field(default=None, max_length=255)
+    browser: str | None = Field(default=None, max_length=100)
+
+    @field_validator("device_type", "device_info", "browser")
+    @classmethod
+    def _blank_to_none(cls, value: str | None) -> str | None:
+        value = (value or "").strip()
+        return value or None
+
+
+class RetrainingStatus(BaseModel):
+    labels_since_model: int
+    threshold: int
+    reached: bool
+
+
+class ModelInfo(BaseModel):
+    type: str
+    trained_at: datetime
+    artifact_path: str
+    metrics: dict
+
+
+class AdminOverview(BaseModel):
+    customers: int
+    transactions: int
+    assessments: int
+    decisions: dict[str, int]
+    cases: dict[str, int]
+    feedback: dict[str, int]
+    model: ModelInfo | None = None
+    retraining: RetrainingStatus

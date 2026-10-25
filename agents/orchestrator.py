@@ -40,6 +40,7 @@ from agents.device_trust import DeviceTrustResult, run_device_trust
 from agents.history import count_prior_transactions
 from agents.ingestion import process_transaction
 from agents.network_intelligence import network_signal
+from agents.agent_log import log_signals
 from agents.case_management import run_case_management
 from agents.explanation import run_explanation
 from agents.risk_synthesis import RiskDecision, run_risk_synthesis_detailed
@@ -92,6 +93,7 @@ def build_graph(session: Session):
             ],
             model_version_id=behavioral.model_version_id,
         )
+        log_signals(session, state["transaction"], decision)  # ADR-027: per-agent audit trail
         return {"assessment": assessment, "risk_decision": decision}
 
     def explanation_node(state: PipelineState) -> PipelineState:

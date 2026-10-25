@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from agents.uid import clean_component, compute_uid
 from api.auth import create_access_token
 from api.main import app
-from db.models import Account, Customer, Merchant, RiskAssessment, Transaction
+from db.models import Account, Customer, FraudCase, Merchant, RiskAssessment, Transaction
 from db.session import get_session
 
 DAY = 86400
@@ -95,7 +95,11 @@ def test_a_uid_with_no_customer_is_403_and_creates_no_customer(client):
     assert _counts(TestSession) == (1, 0, 0)  # the customer the pipeline built was rolled back
 
 
-def test_my_transactions_returns_only_my_rows_newest_first_with_decisions(client):
+# ADR-028: GET /transactions/me is customer-safe. A status only, never the score, explanation or case id.
+SAFE_ROW_KEYS = {"transaction_id", "amount", "currency", "submitted_at", "status"}
+
+
+def test_my_transactions_returns_only_my_rows_newest_first_with_status(client):
     c, TestSession = client
     alice = _make_customer(TestSession, 1000)
     bob = _make_customer(TestSession, 2000)
@@ -109,13 +113,13 @@ def test_my_transactions_returns_only_my_rows_newest_first_with_decisions(client
     rows = r.json()
     assert len(rows) == 3
     assert [row["submitted_at"] for row in rows] == sorted((row["submitted_at"] for row in rows), reverse=True)
-    assert all(row["decision"] == "allow" and row["case_id"] is None for row in rows)
-    assert all(row["explanation"].startswith("Allowed:") for row in rows)
+    assert all(row["status"] == "approved" for row in rows)
+    assert all(set(row) == SAFE_ROW_KEYS for row in rows)  # no decision, risk_score, explanation or case_id
 
 
 def test_my_transactions_includes_seeded_history_without_an_assessment(client):
     """Seeded transactions were loaded straight into the DB (no pipeline run), so
-    they have no RiskAssessment: shown with null decision, not dropped."""
+    they have no RiskAssessment: shown with a null status, not dropped."""
     c, TestSession = client
     alice = _make_customer(TestSession, 1000)
     with TestSession() as s:
@@ -128,10 +132,12 @@ def test_my_transactions_includes_seeded_history_without_an_assessment(client):
 
     rows = c.get("/transactions/me", headers=_headers(alice)).json()
     assert len(rows) == 1
-    assert rows[0]["amount"] == 42.0 and rows[0]["decision"] is None and rows[0]["case_id"] is None
+    assert rows[0]["amount"] == 42.0 and rows[0]["status"] is None
 
 
-def test_flagged_transaction_shows_its_case_in_my_transactions(client):
+def test_flagged_transaction_shows_under_review_and_no_case_id(client):
+    """The customer sees 'under_review' and nothing about the case; the case exists server-side
+    for investigators (checked in the database here)."""
     c, TestSession = client
     alice = _make_customer(TestSession, 1000)
     for i in range(3):
@@ -140,4 +146,9 @@ def test_flagged_transaction_shows_its_case_in_my_transactions(client):
 
     newest = c.get("/transactions/me", headers=_headers(alice)).json()[0]
     assert newest["transaction_id"] == spike.json()["transaction_id"]
-    assert newest["decision"] == "flag" and newest["case_id"] == spike.json()["case_id"]
+    assert newest["status"] == "under_review"
+    assert "case_id" not in newest and "risk_score" not in newest and "decision" not in newest
+
+    with TestSession() as s:
+        case = s.query(FraudCase).filter_by(transaction_id=newest["transaction_id"]).one_or_none()
+        assert case is not None and case.fraud_case_id == spike.json()["case_id"]
