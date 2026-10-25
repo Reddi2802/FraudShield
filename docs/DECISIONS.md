@@ -185,6 +185,8 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 **Consequence:** Every API test that submits a transaction now needs an existing customer and a token (customers must be seeded before they can log in). On a mismatch the pipeline has already run before the rollback; the check sits next to the pipeline's own identity resolution, which keeps it exact. Authentication is frozen after this ADR: no new auth features.
 
+**Amendment (ADR-028):** `GET /transactions/me` and the customer submit response no longer carry the decision, risk score, explanation or case id; customers get a status (approved, under review, declined) only.
+
 ## ADR-022 — Fusion weights kept after an offline check against held-out data
 
 **Context:** The held-out replay flagged or blocked 10.4% of transactions against a ~5% design target. `scripts/fusion_check.py` re-fused the saved per-signal scores under five weight variants (current, rules halved, device off, rules off, behavioral only) on the held-out period (6,565 transactions, 278 fraud).
@@ -196,6 +198,8 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 **Consequence:** Rule Compliance stays a compliance layer, not a fraud ranker; ranking quality comes from the Behavioral model (about 2.5x lift held-out). Revisit the rules' weight if a larger sample is available or the flag rate matters for the demo. The expanded feature set remains the main performance lever.
 
 ## ADR-023 — Dashboard: three pieces, API-first, two read-only database reads
+
+**Status:** Superseded by ADR-027. The Streamlit dashboard was replaced by the website and removed from the repository; kept as the historical record.
 
 **Context:** The demo has to show the whole story from a browser: a customer submits a transaction and sees the decision and explanation, then an investigator reviews the case and records feedback. ADR-021 froze the authentication surface and ADR-010 keeps Admin as a no-login flag.
 
@@ -235,11 +239,13 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 **Consequence:** Rules are compliance checks, not fraud rankers (ADR-022). The honest QnA answer to "how were the thresholds chosen" is: conventional limits, then measured; here they add volume without lift.
 
+**Amendment (ADR-030):** the amount rule now compares with 3.0x the customer's own MEDIAN of earlier amounts, not the mean. The 1.37x lift figure above was measured with the mean and was not re-measured.
+
 ## ADR-027 — Website UI: per-agent audit trail, three additive endpoints, static export served by FastAPI
 
 **Context:** The Streamlit dashboard (ADR-023) reads the database directly in two places and asks the customer for a simulated TransactionDT and a hand-computed D1. A separate website cannot read SQLite, and a customer-facing form cannot ask for either value. Separately, Risk Synthesis builds one `Signal` per agent but only the flattened explanation string was stored, so no client could show "rules 0.60, device 0.15, behavioral 0.00, network abstained" without parsing text, which ADR-020 rejects.
 
-**Decision:** (1) The orchestrator writes one `AgentLog` row per Signal (`raw_output = {score, reason, weight}`; score null = abstained; the fusion weight in force is stored so later weight changes cannot rewrite history). `AgentLog` has existed since Week 1 and was unused. (2) Additive API surface, auth and roles unchanged: `GET /customers/me`, `POST /transactions/me` (amount, product_cd, card6, optional device fields; the server derives card1, addr1, D1 and the simulated time from the stored UID and the latest transaction), `GET /admin/overview` (replaces the direct database read, includes `feedback_status` data), and an optional `signals` field on `POST /transaction*` and `GET /cases/{id}`. (3) The website (`web/`, Next.js static export) is built once to `web/out` and mounted by FastAPI at `/` after all API routes: one process, one origin, no CORS in normal use (a CORS allowance for localhost:3000 exists only for the frontend dev loop).
+**Decision:** (1) The orchestrator writes one `AgentLog` row per Signal (`raw_output = {score, reason, weight}`; score null = abstained; the fusion weight in force is stored so later weight changes cannot rewrite history). `AgentLog` has existed since Week 1 and was unused. (2) Additive API surface, auth and roles unchanged: `GET /customers/me`, `POST /transactions/me` (amount, plus an optional product code and optional device fields; the server derives card1, addr1, D1, the card type and the simulated time from the stored UID, the account and the latest transaction), `GET /admin/overview` (replaces the direct database read, includes `feedback_status` data), and an optional `signals` field on `POST /transaction*` and `GET /cases/{id}`. (3) The website (`web/`, Next.js static export) is built once to `web/out` and mounted by FastAPI at `/` after all API routes: one process, one origin, no CORS in normal use (a CORS allowance for localhost:3000 exists only for the frontend dev loop).
 
 **Evidence:** `D1 = days - D1n` is not exact in floating point: over 5,000 random (time, D1n) pairs the naive formula lands one day low in a measurable share of cases, which silently changes the UID and the API answers 403. `api/identity.d1_for` subtracts 1e-6 day first; `tests/test_api/test_identity.py` asserts both the failure of the naive form and the safety of the fixed form.
 
@@ -255,7 +261,7 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 **Rejected alternatives:** (1) Hiding the fields in the UI only, leaving the API unchanged: still readable in DevTools. (2) A generic "declined" with no reason for both review and decline: under review tells the customer to expect contact, which is the honest outcome of a flag.
 
-**Consequence:** This supersedes the part of ADR-021 that described `GET /transactions/me` returning decision, risk_score and explanation. The legacy raw endpoint `POST /transaction` is unchanged and still returns the full response for scripts and tests (`scripts/demo_auth_flow.py` uses it); it is customer-token authenticated, so it is the one remaining place a customer could read scores. Delete it or restrict it before showing the API to anyone you do not trust. Existing tests of `GET /transactions/me` that assert `decision` or `risk_score` must be updated to assert `status`.
+**Consequence:** This supersedes the part of ADR-021 that described `GET /transactions/me` returning decision, risk_score and explanation. The legacy raw endpoint `POST /transaction` is unchanged and still returns the full response for scripts and tests (`scripts/demo_auth_flow.py` uses it); it is customer-token authenticated, so it is the one remaining place a customer could read scores (ADR-030 hides it from /docs). Delete it or restrict it before showing the API to anyone you do not trust. Existing tests of `GET /transactions/me` that assert `decision` or `risk_score` must be updated to assert `status`.
 
 ## ADR-029 — The website shows rupees at a fixed demo rate; data and model stay in dollars
 
@@ -267,9 +273,24 @@ Observed at seed time: high-count UID collisions are concentrated in rows with m
 
 **Consequence:** Changing the demo rate is a one-line edit. The explanation text from the backend contains dollar figures (for example "amount 5000.00 > 3.0x customer's own mean 58.88"); those are shown unconverted and labelled as dollars rather than rewriting backend text. Only `web/` changes; no backend file or test is affected.
 
+## ADR-030 — Amount rule uses the customer's median; customers see no product code or card toggle; legacy endpoint hidden
+
+**Context:** A live check showed a transaction 180x a customer's typical amount (₹10,00,000 against a typical ₹5,505) was APPROVED. The amount rule (ADR-026) compared with 3x the customer's MEAN over every earlier transaction, including transactions the system had itself flagged and earlier test submissions. Reproduced offline: a customer typically spending $58 had a mean of $59, which rose to $864 after one flagged $10,526 transaction and $4,703 after three more; the threshold reached $14,108 and the next $10,526 passed. The median stayed at $58 to $72 throughout. The screen also showed the median as "typical amount" while the rule used the mean. Two form fields were also misleading: the credit/debit toggle had no effect (the Behavioral model reads `Account.account_type`, fixed when the account was created; rules and Device Trust ignore card type), and the product code (the dataset's anonymized ProductCD) is a merchant property no customer chooses.
+
+**Decision:** (1) `check_amount` compares with `statistics.median` of the earlier amounts, same 3.0x multiplier, same minimum of 3 earlier transactions, same rule name and severity; the evidence text says "median". (2) `POST /transactions/me` no longer accepts card type; the card on file is used, and `GET /customers/me` returns `card_type` read-only. (3) The product code is optional: when omitted the server uses the customer's most-used code; the website exposes it only under "Demo controls", labelled as an anonymized dataset code. (4) The legacy `POST /transaction` stays for scripts and tests but is hidden from `/docs` (`include_in_schema=False`).
+
+**Evidence:** `tests/test_agents/test_amount_median.py` asserts that a history poisoned with 576, 5,766 and 57,666 still lets a $10,526 spike fire, and that the mean-based rule would have passed it. Re-running the scenario after the change flags every step.
+
+**Rejected alternatives:** (1) Excluding flagged and blocked transactions from the baseline: needs a join to RiskAssessment, and seeded history has none. (2) Capping each earlier amount (winsorizing): adds a tuning constant. (3) Leaving the rule and resetting the database before demos: a live viva could still trigger it. (4) Inventing friendly labels for W, C, R, H, S: the dataset does not disclose their meaning. (5) Changing the legacy endpoint's response: breaks tests and `scripts/demo_auth_flow.py` for no website benefit.
+
+**Consequence:** The rule's "typical amount" now matches the number shown to the customer. The Behavioral model's features `amt_ratio` and `amt_z` still use the mean (training/serving parity, ADR-012), so the model alone is not robust to a poisoned history; the median rule covers that case. ADR-026's lift figure (1.37x) was measured with the mean and was not re-measured; the held-out conclusion (rules are a compliance layer, ADR-022) is unaffected. Rule evidence strings change from "mean" to "median"; tests that assert that wording must be updated. `scripts/demo_reset.py` rebuilds the demo database reproducibly.
+
 ---
 
 ## Open items (revisit as the project progresses)
 
 - Expanded feature set (C/D/dist1/card4 columns, ~14x lift in `feature_signal`) is a stretch item, decided only after the core pipeline is complete (needs an API payload and storage change plus a new ADR).
 - Label delay: investigators confirm fraud with a lag, so a production retraining loop would leave a gap between the training window and the evaluation window. The current chronological split has no gap; note this as a known limitation.
+- The Behavioral model's `amt_ratio` / `amt_z` features still use the customer's mean (training/serving parity, ADR-012); only the amount RULE uses the median (ADR-030).
+- Legacy `POST /transaction` still returns the full score to a customer token; it is hidden from `/docs` and kept for scripts and tests (ADR-028, ADR-030).
+- `GET /admin/overview` has no authentication (ADR-010, ADR-027): acceptable for a local demo only.

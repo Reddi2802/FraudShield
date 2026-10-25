@@ -87,14 +87,14 @@ Companion to `DECISIONS.md` (the *why*) — this is the *what's left*. Check ite
 - [ ] QnA checkpoint: why a deterministic template first (ADR-004), why the explanation reads structured evidence, why cases are idempotent and stamped with transaction time
 - [ ] (stretch #3) Ollama integration tested — `llama3.1:8b-instruct` pulled and actually called, latency checked
 
-## Week 7 — Dashboard + auth
+## Week 7 — Website + auth
 
-- [x] Real JWT auth for Customer and Investigator roles (ADR-021); Admin stays a simplified dashboard flag (ADR-010)
-- [x] `dashboard/` — Streamlit: Submit transaction (customer), Case queue (investigator), Admin overview (demo flag) (ADR-023); live feed and per-agent status panels are stretch
-- [x] Investigator case review + `Feedback` submission — API (`/cases`, ADR-021) and the dashboard form
-- [ ] Integration testing across the full stack (API + agents + dashboard)
+- [x] Real JWT auth for Customer and Investigator roles (ADR-021); Admin stays a simplified demo page (ADR-010)
+- [x] `web/` — website (Next.js static export served by FastAPI): customer submit with a status-only result, investigator case queue with the per-agent breakdown, admin overview, rupee display (ADR-027, ADR-028, ADR-029); replaces the Streamlit dashboard (ADR-023 superseded)
+- [x] Investigator case review + `Feedback` submission — API (`/cases`, ADR-021) and the website form
+- [ ] Integration testing across the full stack (API + agents + website)
 - [ ] Commit
-- [ ] QnA checkpoint: auth flow, how the dashboard reads/writes case data
+- [ ] QnA checkpoint: auth flow, how the website reads/writes case data
 
 ## Week 8 — Tests, CI, polish
 
@@ -102,7 +102,11 @@ Companion to `DECISIONS.md` (the *why*) — this is the *what's left*. Check ite
 - [x] `.github/workflows/` — one minimal CI workflow, runs pytest on push
 - [x] **Resolve the retraining-threshold open item** — 100 labels, written into `DECISIONS.md` (ADR-025)
 - [ ] `DECISIONS.md` finalization pass — confirm it reflects what was actually built, not just what was planned
+- [x] Amount rule compares with the customer's median (ADR-030); customer-safe responses (ADR-028)
+- [ ] `scripts/demo_reset.py` run end to end on the real dataset
+- [ ] Browser QA walkthrough on the real demo DB (Antigravity checklist), findings fixed
 - [ ] Demo rehearsal — practice explaining every agent, not just running the demo
+- [ ] Demo video recorded (10-minute script: demo_script_10min.pdf)
 
 ---
 

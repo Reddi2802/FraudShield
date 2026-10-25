@@ -38,7 +38,7 @@ POST /transaction
   FastAPI Response (decision, score, explanation, case_id)
         │
         ▼
-  Streamlit Dashboard (submit page, case queue, admin overview)
+  Website (Next.js static export served by FastAPI: customer, investigator, admin overview)
         │
         ▼
   Investigator resolves case → Feedback stored → manual retraining script (automatic trigger = stretch)
@@ -75,7 +75,7 @@ All 8 agents above are core scope (see `docs/DECISIONS.md`, ADR-008). A ninth ag
 - **LLM (stretch):** Ollama, `llama3.1:8b-instruct` (local, quantized — no API cost, no data leaves the device) for richer explanations
 - **Database:** SQLite + SQLAlchemy
 - **Scheduling (stretch):** APScheduler for the Network Intelligence batch job and retraining trigger; until then both run as manual scripts
-- **Dashboard:** Streamlit + Plotly
+- **Website:** Next.js + TypeScript, built once to static files and served by the same FastAPI process (Node 20+ needed to build)
 - **Testing:** pytest, GitHub Actions CI
 - **Package management:** uv
 - **Dataset:** [IEEE-CIS Fraud Detection](https://www.kaggle.com/c/ieee-fraud-detection) (Kaggle) — not committed to the repo, see Data below
@@ -89,11 +89,11 @@ api/               # FastAPI app, entry point, request/response models, JWT auth
 db/                # SQLAlchemy models + session/engine, schema follows the Lab5 ERD
 ml/                # train_behavioral.py (XGBoost), evaluation
   artifacts/       # gitignored — trained model files, not committed
-dashboard/         # Streamlit app: Submit transaction (customer), Case queue (investigator),
-                   # Admin overview (demo flag)
+web/               # website source (Next.js, static export to web/out, served by api/main.py):
+                   # customer submit, investigator case queue, admin overview
 scripts/           # seed_db.py, check_seed.py, prior_txn_buckets.py, feature_signal.py,
                    # replay_eval.py, fusion_check.py, seed_investigators.py, demo_auth_flow.py,
-                   # run_network_batch.py, feedback_status.py
+                   # run_network_batch.py, feedback_status.py, demo_reset.py
 tests/             # pytest, mirrors agents/ and api/
   test_agents/
   test_api/
@@ -129,11 +129,20 @@ Run the API:
 uv run uvicorn api.main:app --reload
 ```
 
-Run the dashboard (from the repo root, with the API running in another terminal; `API_URL` overrides the default `http://127.0.0.1:8000`):
+Build and open the website (needs Node 20+; the API serves the built site, so there is one server and no CORS):
 ```bash
-uv run streamlit run dashboard/app.py
+cd web
+npm install
+npm run build        # writes web/out (gitignored); rebuild after any change under web/
+cd ..
+uv run uvicorn api.main:app      # open http://127.0.0.1:8000
 ```
-Log in from the sidebar with a demo account (password `ChangeMe123!`): `seed.customer.00001@example.invalid` as `customer`, or `investigator1@example.invalid` as `investigator`. The sidebar checkbox **Admin view (demo flag)** shows a read-only overview.
+Log in with a demo account (password `ChangeMe123!`): `seed.customer.00001@example.invalid` as `customer`, or `investigator1@example.invalid` as `investigator`. The sidebar's **Admin view (demo)** and the `#/admin` address open a read-only overview without login (ADR-010). Amounts are displayed in rupees at a fixed demo rate of 95 per dollar (ADR-029); the data and model stay in dollars.
+
+Rebuild the demo database from scratch (stop the server first; slow; DESTROYS `fraud_detection.db`; needs the dataset and a trained model):
+```bash
+uv run python -m scripts.demo_reset --yes
+```
 
 Run tests:
 ```bash
@@ -181,28 +190,6 @@ How much investigator feedback has arrived since the model was trained (ADR-025)
 uv run python -m scripts.feedback_status
 ```
 
-## Website UI (ADR-027)
-
-Build once (needs Node 20+), then run the API, which also serves the site:
-
-```bash
-cd web && npm install && npm run build && cd ..   # writes web/out
-uv run uvicorn api.main:app                       # open http://127.0.0.1:8000
-```
-
-Log in with the same demo accounts as before (password `ChangeMe123!`). The Admin overview is reachable without
-login via the sidebar or `#/admin`. Rebuild (`npm run build`) after any change under `web/`.
-
-Frontend dev loop with hot reload (API on :8000, site on :3000):
-
-```bash
-uv run uvicorn api.main:app        # terminal 1
-cd web && npm run dev              # terminal 2, set NEXT_PUBLIC_API_BASE=http://127.0.0.1:8000
-```
-
-UI work without a backend: `NEXT_PUBLIC_USE_MOCK=true npm run dev` (sample data, never the default).
-Existing databases need no migration: `AgentLog` already exists; older transactions simply show no signal breakdown.
-
 ## Roadmap
 
 All 8 agents are core scope (ADR-008). Build order is sequenced by dependency and complexity, not by an artificial core/extension split:
@@ -213,7 +200,7 @@ All 8 agents are core scope (ADR-008). Build order is sequenced by dependency an
 - **Week 4:** Risk Synthesis Agent + orchestrator wiring — first end-to-end demo (Ingestion → Rules → Device → Behavioral → decision).
 - **Week 5 — checkpoint:** Network Intelligence Agent (graph metrics; manual batch script, scheduler is a stretch item). Go/no-go decision on Investigator Assistant Agent made here against actual progress (ADR-009).
 - **Week 6:** Explanation Agent (deterministic template; LLM enrichment is a stretch item) + Case Management Agent.
-- **Week 7:** Streamlit dashboard, Customer/Investigator JWT auth, Admin role flag, integration testing.
+- **Week 7:** Website UI (Next.js, ADR-027 to ADR-029; replaced the Streamlit dashboard), Customer/Investigator JWT auth, Admin role flag, integration testing.
 - **Week 8:** Test coverage (pytest), a minimal GitHub Actions CI workflow (run pytest on push), retraining-threshold decision, DECISIONS.md finalization, demo rehearsal.
 - **Week 9 (buffer):** Absorbs holiday/lab disruption; Investigator Assistant work lands here if greenlit at the week-5 checkpoint.
 
