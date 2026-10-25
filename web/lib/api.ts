@@ -47,6 +47,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   if (res.status === 401 && path !== '/auth/login') {
     token = ''
     window.sessionStorage.clear()
+    window.sessionStorage.setItem('fraudshield_flash_error', 'Your session expired. Log in again.')
     window.location.hash = '#/login'
     throw new ApiError(401, 'Your session expired. Log in again.')
   }

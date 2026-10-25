@@ -235,3 +235,29 @@ def test_old_raw_endpoint_still_works(client, session_factory):
         "amount": 60.0, "product_cd": "W", "transaction_dt": dt})
     assert r.status_code == 201, r.text
     assert r.json()["signals"] is not None
+
+
+def test_investigator_resolution_updates_customer_transaction_status(client, session_factory):
+    """When an investigator resolves a flagged case, the customer sees the updated status (approved or declined)."""
+    _seed_customer(session_factory, amount=50.0)
+    cust_h = _login(client, "seed.customer.00001@example.invalid", "customer")
+    inv_h = _login(client, "investigator1@example.invalid", "investigator")
+
+    # Flagged transaction
+    res = client.post("/transactions/me", headers=cust_h, json={"amount": 5000.0, "product_cd": "W"}).json()
+    assert res["status"] in {"under_review", "declined"}
+
+    # Initially under review in customer transactions
+    rows = client.get("/transactions/me", headers=cust_h).json()
+    assert rows[0]["status"] == "under_review"
+
+    # Investigator resolves as not_fraud
+    cases = client.get("/cases?status=open", headers=inv_h).json()
+    case_id = cases[0]["case_id"]
+    fb_res = client.post(f"/cases/{case_id}/feedback", headers=inv_h, json={"label": "not_fraud", "notes": "verified legit"})
+    assert fb_res.status_code == 201
+
+    # Customer view now reflects approved!
+    rows = client.get("/transactions/me", headers=cust_h).json()
+    assert rows[0]["status"] == "approved"
+

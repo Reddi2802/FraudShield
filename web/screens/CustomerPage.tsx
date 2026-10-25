@@ -43,7 +43,9 @@ export function CustomerPage() {
         browser: browser.trim() || undefined,
       })
       setResult(r)
-      setTransactions(await api.transactions())
+      const [txs, cust] = await Promise.all([api.transactions(), api.customer()])
+      setTransactions(txs)
+      setCustomer(cust)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to submit')
     } finally {
@@ -201,7 +203,12 @@ export function CustomerPage() {
             </div>
             <button
               className="icon-button"
-              onClick={() => api.transactions().then(setTransactions)}
+              onClick={() => {
+                Promise.all([api.transactions(), api.customer()]).then(([t, c]) => {
+                  setTransactions(t)
+                  setCustomer(c)
+                })
+              }}
               aria-label="Refresh transactions"
             >
               <RefreshCw />

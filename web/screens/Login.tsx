@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ChevronRight, ShieldCheck } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
 import type { Customer, Role } from '@/lib/types'
@@ -11,6 +11,14 @@ export function Login() {
   const [password, setPassword] = useState('ChangeMe123!')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    const flash = sessionStorage.getItem('fraudshield_flash_error')
+    if (flash) {
+      setError(flash)
+      sessionStorage.removeItem('fraudshield_flash_error')
+    }
+  }, [])
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setBusy(true)

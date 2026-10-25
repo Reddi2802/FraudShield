@@ -20,7 +20,7 @@ from api.schemas import (
     TransactionResponse,
 )
 from api.signals import signals_for_transaction
-from db.models import Account, Customer, Merchant, Transaction
+from db.models import Account, CaseStatusEnum, Customer, FeedbackLabelEnum, Merchant, Transaction
 from db.session import get_session
 
 router = APIRouter(prefix="/transaction", tags=["transactions"])
@@ -197,13 +197,25 @@ def my_transactions(
         assessment = (
             max(t.risk_assessments, key=lambda a: a.risk_assessment_id) if t.risk_assessments else None
         )
+        status = None
+        if assessment:
+            # If an investigator reviewed and resolved this transaction's case,
+            # use their human verdict (ADR-021, closed-loop resolution).
+            if t.fraud_case and t.fraud_case.status == CaseStatusEnum.RESOLVED and t.fraud_case.feedback_entries:
+                latest_fb = max(t.fraud_case.feedback_entries, key=lambda f: f.feedback_id)
+                if latest_fb.label == FeedbackLabelEnum.NOT_FRAUD:
+                    status = "approved"
+                elif latest_fb.label == FeedbackLabelEnum.FRAUD:
+                    status = "declined"
+            if status is None:
+                status = CUSTOMER_STATUS_BY_DECISION[assessment.decision.value]
         items.append(
             MyTransaction(
                 transaction_id=t.transaction_id,
                 amount=t.amount,
                 currency=t.currency,
                 submitted_at=t.submitted_at,
-                status=CUSTOMER_STATUS_BY_DECISION[assessment.decision.value] if assessment else None,
+                status=status,
             )
         )
     return items
