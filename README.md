@@ -137,6 +137,9 @@ npm run build        # writes web/out (gitignored); rebuild after any change und
 cd ..
 uv run uvicorn api.main:app      # open http://127.0.0.1:8000
 ```
+
+> **Note (Windows / Next.js 16.4):** `npm run build` already uses `--webpack` (set in `web/package.json`) to work around a Turbopack crash on Windows when processing `globals.css`. Do not change this flag.
+
 Log in with a demo account (password `ChangeMe123!`): `seed.customer.00001@example.invalid` as `customer`, or `investigator1@example.invalid` as `investigator`. The sidebar's **Admin view (demo)** and the `#/admin` address open a read-only overview without login (ADR-010). Amounts are displayed in rupees at a fixed demo rate of 95 per dollar (ADR-029); the data and model stay in dollars.
 
 Rebuild the demo database from scratch (stop the server first; slow; DESTROYS `fraud_detection.db`; needs the dataset and a trained model):
@@ -160,7 +163,15 @@ Create the two demo investigators (idempotent; password `ChangeMe123!`, the same
 ```bash
 uv run python -m scripts.seed_investigators
 ```
-Log in with `POST /auth/login` (`{email, password, role}`). Seeded customers: `seed.customer.00001@example.invalid`, role `customer`. Investigators: `investigator1@example.invalid`, role `investigator`. Set the `JWT_SECRET` environment variable for anything beyond a local demo (a development default is used, with a warning, when it is missing).
+Log in with `POST /auth/login` (`{email, password, role}`). Seeded customers: `seed.customer.00001@example.invalid`, role `customer`. Investigators: `investigator1@example.invalid`, role `investigator`.
+
+### Environment variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `JWT_SECRET` | **Recommended** for anything beyond a local demo | Secret key used to sign JWT tokens. If absent, a hard-coded development default is used and the server logs a warning. **Set this to a strong random value in any shared or production environment.** |
+
+No other environment variables are required. The development default for `JWT_SECRET` is intentionally not committed to this repository — generate your own with `python -c "import secrets; print(secrets.token_hex(32))"` and set it in your shell or a `.env` file (never commit the `.env` file).
 
 See the whole flow (login, submit, flagged case, investigator review, feedback) with the server running in another terminal:
 ```bash
