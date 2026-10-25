@@ -46,8 +46,8 @@ from db.models import RuleViolation, Transaction
 VELOCITY_WINDOW = timedelta(hours=1)
 VELOCITY_MAX_TXNS = 5
 
-AMOUNT_MULTIPLIER_THRESHOLD = 3.0        # flag if > 3x customer's own historical mean
-AMOUNT_MIN_HISTORY_FOR_MULTIPLIER = 3    # need >= 3 prior txns to trust a customer-specific mean
+AMOUNT_MULTIPLIER_THRESHOLD = 3.0        # flag if > 3x customer's own historical median (ADR-030)
+AMOUNT_MIN_HISTORY_FOR_MULTIPLIER = 3    # need >= 3 prior txns to trust a customer-specific median
 # else fall back to a global percentile — arbitrary starting point, not tuned
 
 SEVERITY_BY_RULE = {
@@ -94,10 +94,12 @@ def check_amount(
 ) -> tuple[bool, Optional[str], Optional[str]]:
     """Returns (fired, detail, rule_name) — rule_name distinguishes which tier fired, for severity mapping."""
     if len(prior_amts) >= AMOUNT_MIN_HISTORY_FOR_MULTIPLIER:
-        mean_amt = sum(prior_amts) / len(prior_amts)
-        if mean_amt > 0 and current_amt > AMOUNT_MULTIPLIER_THRESHOLD * mean_amt:
+        # MEDIAN, not mean (ADR-030): earlier flagged or test transactions inflate a mean until a
+        # transaction 180x the customer's norm passes; the median barely moves.
+        typical_amt = statistics.median(prior_amts)
+        if typical_amt > 0 and current_amt > AMOUNT_MULTIPLIER_THRESHOLD * typical_amt:
             detail = (f"amount {current_amt:.2f} > {AMOUNT_MULTIPLIER_THRESHOLD}x "
-                       f"customer's own mean {mean_amt:.2f} (n={len(prior_amts)})")
+                       f"customer's own median {typical_amt:.2f} (n={len(prior_amts)})")
             return True, detail, "amount_own_history"
         return False, None, None
 

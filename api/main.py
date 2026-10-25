@@ -55,3 +55,10 @@ def health() -> dict[str, str]:
 # Mounted LAST so every API route above wins over the static catch-all.
 if (WEB_DIR / "index.html").exists():
     app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
+else:
+    import logging
+
+    logging.getLogger("uvicorn.error").warning(
+        "Website not built: %s is missing. Run `cd web && npm install && npm run build`, then restart.",
+        WEB_DIR / "index.html",
+    )

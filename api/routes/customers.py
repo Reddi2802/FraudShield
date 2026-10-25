@@ -29,6 +29,7 @@ def my_profile(
     except ValueError:
         card1 = None
 
+    account = session.query(Account).filter(Account.customer_id == customer.customer_id).first()
     amounts = [
         row[0]
         for row in session.query(Transaction.amount)
@@ -40,6 +41,7 @@ def my_profile(
         name=customer.name,
         email=customer.email,
         card1=card1,
+        card_type=account.account_type if account else None,
         billing_region=customer.billing_region,
         typical_amount=round(statistics.median(amounts), 2) if amounts else None,
         transaction_count=len(amounts),

@@ -20,7 +20,7 @@ from api.schemas import (
     TransactionResponse,
 )
 from api.signals import signals_for_transaction
-from db.models import Account, Customer, Transaction
+from db.models import Account, Customer, Merchant, Transaction
 from db.session import get_session
 
 router = APIRouter(prefix="/transaction", tags=["transactions"])
@@ -81,7 +81,9 @@ def _score_and_commit(session: Session, user: AuthUser, payload: dict[str, Any])
     )
 
 
-@router.post("", response_model=TransactionResponse, status_code=201)
+# include_in_schema=False: this raw endpoint returns the full score to a customer token, so it is kept for
+# scripts and tests but hidden from /docs (ADR-028 consequence). The website uses POST /transactions/me.
+@router.post("", response_model=TransactionResponse, status_code=201, include_in_schema=False)
 def submit_transaction(
     payload: TransactionRequest,
     session: Session = Depends(get_session),
@@ -131,6 +133,21 @@ def submit_my_transaction(
         .scalar()
     )
     dt = next_transaction_dt(latest)
+
+    account = session.query(Account).filter(Account.customer_id == customer.customer_id).first()
+    card6 = account.account_type if account and account.account_type in ("credit", "debit") else None
+    product_cd = payload.product_cd
+    if product_cd is None:  # customers do not choose a dataset product code: default to their usual one
+        usual = (
+            session.query(Merchant.category, func.count().label("n"))
+            .join(Transaction, Transaction.merchant_id == Merchant.merchant_id)
+            .join(Account, Transaction.account_id == Account.account_id)
+            .filter(Account.customer_id == customer.customer_id)
+            .group_by(Merchant.category)
+            .order_by(func.count().desc())
+            .first()
+        )
+        product_cd = usual[0] if usual else "W"
     full = _score_and_commit(
         session,
         user,
@@ -138,10 +155,10 @@ def submit_my_transaction(
             card1=card1,
             addr1=addr1,
             d1=d1_for(dt, d1n),
-            card6=payload.card6,
+            card6=card6,
             amount=payload.amount,
             currency="USD",
-            product_cd=payload.product_cd,
+            product_cd=product_cd,
             device_type=payload.device_type,
             device_info=payload.device_info,
             browser=payload.browser,

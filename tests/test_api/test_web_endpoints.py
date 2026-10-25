@@ -116,6 +116,33 @@ def test_status_mapping_and_messages(client, session_factory):
     assert "risk" not in big["message"].lower() and "rule" not in big["message"].lower()
 
 
+def test_product_code_is_optional_and_defaults_to_the_customers_usual_one(client, session_factory):
+    _seed_customer(session_factory)  # all seeded history is category W
+    h = _login(client, "seed.customer.00001@example.invalid", "customer")
+    assert client.post("/transactions/me", headers=h, json={"amount": 55.0}).status_code == 201
+    with session_factory() as s:
+        last = s.query(Transaction).order_by(Transaction.transaction_id.desc()).first()
+        assert last.merchant.category == "W"
+    assert client.post("/transactions/me", headers=h, json={"amount": 55.0, "product_cd": "C"}).status_code == 201
+    with session_factory() as s:
+        last = s.query(Transaction).order_by(Transaction.transaction_id.desc()).first()
+        assert last.merchant.category == "C"
+
+
+def test_card_type_is_read_only_and_comes_from_the_card_on_file(client, session_factory):
+    _seed_customer(session_factory)
+    h = _login(client, "seed.customer.00001@example.invalid", "customer")
+    assert client.get("/customers/me", headers=h).json()["card_type"] == "credit"
+    # a card6 sent by a client is ignored, never an error and never an effect
+    assert client.post("/transactions/me", headers=h, json={"amount": 55.0, "card6": "debit"}).status_code == 201
+
+
+def test_legacy_raw_endpoint_is_hidden_from_the_api_docs(client):
+    paths = client.get("/openapi.json").json()["paths"]
+    assert "/transaction" not in paths
+    assert "/transactions/me" in paths
+
+
 def test_blank_device_fields_do_not_create_a_device(client, session_factory):
     _seed_customer(session_factory)
     h = _login(client, "seed.customer.00001@example.invalid", "customer")
@@ -139,7 +166,6 @@ def test_device_fields_reach_the_pipeline(client, session_factory):
     {"amount": 0, "product_cd": "W"},
     {"amount": -5, "product_cd": "W"},
     {"amount": 10, "product_cd": "Z"},
-    {"amount": 10, "product_cd": "W", "card6": "gold"},
 ])
 def test_submit_my_transaction_validation(client, session_factory, payload):
     _seed_customer(session_factory)

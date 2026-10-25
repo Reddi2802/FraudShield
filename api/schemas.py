@@ -193,6 +193,7 @@ class CustomerMe(BaseModel):
     name: str
     email: str
     card1: int | None = None  # masked IEEE-CIS identifier, NOT a real card number
+    card_type: str | None = None  # card on file ("credit" / "debit"), read-only: the account fixes it (ADR-030)
     billing_region: str | None = None
     typical_amount: float | None = None  # median of the customer's amounts
     transaction_count: int
@@ -203,8 +204,9 @@ class MyTransactionRequest(BaseModel):
     time from the logged-in customer, so none of those can be wrong or spoofed."""
 
     amount: float = Field(gt=0)
-    product_cd: Literal["W", "C", "R", "H", "S"]
-    card6: Literal["credit", "debit"] = "credit"
+    # Optional demo control (ADR-030): the dataset's anonymized ProductCD. When omitted the server uses the
+    # customer's most-used code. Card type is NOT accepted: the card on file decides it.
+    product_cd: Literal["W", "C", "R", "H", "S"] | None = None
     device_type: str | None = Field(default=None, max_length=100)
     device_info: str | None = Field(default=None, max_length=255)
     browser: str | None = Field(default=None, max_length=100)
